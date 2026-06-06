@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
 
         # Right detail panel
         self._detail = DetailPanel(self._thumbnail_cache)
+        self._detail.set_session(self._session)
 
         splitter.addWidget(self._sidebar)
         splitter.addWidget(self._grid_view)

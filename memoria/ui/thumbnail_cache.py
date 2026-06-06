@@ -62,9 +62,33 @@ class ThumbnailWorker(QRunnable):
 
     def _generate(self) -> QPixmap | None:
         if self.file_type == "photo":
-            return self._from_image()
+            px = self._from_image()
+            if px:
+                px = self._correct_orientation(px)
+            return px
         else:
             return self._from_video()
+
+    def _correct_orientation(self, px: QPixmap) -> QPixmap:
+        """Rotate thumbnail to match EXIF orientation tag."""
+        try:
+            import exifread
+            from PyQt6.QtGui import QTransform
+            with open(self.filepath, "rb") as f:
+                tags = exifread.process_file(f, stop_tag="Image Orientation", details=False)
+            tag = tags.get("Image Orientation")
+            if tag is None:
+                return px
+            val = tag.values[0] if tag.values else 1
+            t = QTransform()
+            if val == 3:   t.rotate(180)
+            elif val == 6: t.rotate(90)
+            elif val == 8: t.rotate(-90)
+            if val not in (1, 2, 4, 5, 7):
+                return px.transformed(t, Qt.TransformationMode.SmoothTransformation)
+        except Exception:
+            pass
+        return px
 
     def _from_image(self) -> QPixmap | None:
         img = QImage(self.filepath)
