@@ -1,0 +1,27 @@
+# UI
+PyQt6>=6.7.0
+
+# Database
+SQLAlchemy>=2.0.0
+
+# Image processing + EXIF
+Pillow>=10.0.0
+exifread>=3.0.0
+
+# Perceptual hashing / duplicate detection
+ImageHash>=4.3.1
+
+# Face recognition (local models only)
+deepface>=0.0.93
+tf-keras>=2.16.0          # required by deepface with TF 2.16+
+
+# Video metadata
+ffmpeg-python>=0.2.0
+# NOTE: ffmpeg binary must also be installed and on PATH
+# Download from https://ffmpeg.org/download.html
+
+# Reverse geocoding (offline-capable)
+reverse_geocoder>=1.5.1
+
+# Utilities
+numpy>=1.24.0
