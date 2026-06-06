@@ -94,8 +94,8 @@ class _TagChip(QWidget):
         super().__init__(parent)
         self.tag_id = tag_id
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 2, 4, 2)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 1, 4, 1)
+        layout.setSpacing(3)
 
         lbl = QLabel(label)
         lbl.setStyleSheet("color:#d4d4d4; font-size:11px;")
@@ -424,7 +424,7 @@ class DetailPanel(QWidget):
             container.setStyleSheet("background: transparent;")
             v = QVBoxLayout(container)
             v.setContentsMargins(0, 0, 0, 0)
-            v.setSpacing(4)
+            v.setSpacing(2)
 
             hdr = QLabel("Tags")
             hdr.setStyleSheet("color:#555; font-size:10px; font-weight:bold;")

@@ -249,6 +249,11 @@ class MainWindow(QMainWindow):
         index_action.triggered.connect(self._run_index)
         lib_menu.addAction(index_action)
 
+        face_action = QAction("Name faces…", self)
+        face_action.setShortcut("Ctrl+F")
+        face_action.triggered.connect(self._open_face_naming)
+        lib_menu.addAction(face_action)
+
         lib_menu.addSeparator()
 
         quit_action = QAction("Quit", self)
@@ -400,6 +405,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log.warning(f"Could not load metadata for file {record['id']}: {e}")
         self._detail.show_file(record, meta)
+
+    def _open_face_naming(self):
+        from memoria.ui.face_naming import FaceNamingDialog
+        dlg = FaceNamingDialog(self)
+        dlg.people_updated.connect(self._load_records)
+        dlg.exec()
 
     def _run_index(self):
         from memoria.indexer.scanner import run_index
