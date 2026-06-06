@@ -92,7 +92,7 @@ def main():
     palette.setColor(QPalette.ColorRole.Text, QColor("#d4d4d4"))
     palette.setColor(QPalette.ColorRole.Button, QColor("#3a3a3a"))
     palette.setColor(QPalette.ColorRole.ButtonText, QColor("#d4d4d4"))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor("#094771"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#7c6af7"))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
     app.setPalette(palette)
 

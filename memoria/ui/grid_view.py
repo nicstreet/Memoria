@@ -80,8 +80,8 @@ class PhotoGridModel(QAbstractListModel):
 class PhotoDelegate(QStyledItemDelegate):
     """Renders each photo/video as a dark card with thumbnail + label."""
 
-    RADIUS = 6
-    PADDING = 8
+    RADIUS = 4
+    PADDING = 2
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -94,7 +94,7 @@ class PhotoDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        rect = option.rect.adjusted(4, 4, -4, -4)
+        rect = option.rect.adjusted(2, 2, -2, -2)
         selected = bool(option.state & option.state.State_Selected)
 
         # Card background
@@ -155,7 +155,7 @@ class PhotoGridView(QListView):
         super().__init__(parent)
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setResizeMode(QListView.ResizeMode.Adjust)
-        self.setSpacing(4)
+        self.setSpacing(0)
         self.setUniformItemSizes(True)
         self.setMovement(QListView.Movement.Static)
         self.setSelectionMode(QListView.SelectionMode.SingleSelection)
@@ -174,6 +174,10 @@ class PhotoGridView(QListView):
         self._delegate.set_card_width(width)
         if hasattr(self, "_grid_model"):
             self._grid_model.set_card_width(width)
+        # setGridSize tells Qt exactly how wide each cell is — no internal rounding
+        self.setGridSize(QSize(width, _card_height(width)))
+        self.scheduleDelayedItemsLayout()
+        self.viewport().update()
 
     def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex):
         if current.isValid():

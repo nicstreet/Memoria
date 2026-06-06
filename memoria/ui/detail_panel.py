@@ -18,8 +18,8 @@ class DetailPanel(QWidget):
     def __init__(self, thumbnail_cache: ThumbnailCache, parent=None):
         super().__init__(parent)
         self.setObjectName("detailPanel")
-        self.setMinimumWidth(220)
-        self.setMaximumWidth(340)
+        self.setMinimumWidth(184)   # matches sidebar minimum
+        self.setMaximumWidth(320)
         self._cache = thumbnail_cache
         self._current_record: dict | None = None
         self._current_meta: dict | None = None
@@ -30,9 +30,12 @@ class DetailPanel(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # Large thumbnail preview
+        # Large thumbnail preview — fills panel width, square aspect
         self._thumb_label = QLabel()
-        self._thumb_label.setFixedSize(256, 256)
+        self._thumb_label.setMinimumSize(160, 160)
+        self._thumb_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self._thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._thumb_label.setStyleSheet("background:#1a1a1a; border-radius:4px;")
         layout.addWidget(self._thumb_label)
@@ -150,6 +153,24 @@ class DetailPanel(QWidget):
         v.addWidget(val)
 
         self._meta_layout.insertWidget(self._meta_layout.count() - 1, row)
+
+    def resizeEvent(self, event):
+        """Keep thumbnail square and filling the available width."""
+        super().resizeEvent(event)
+        available = self.width() - 24  # 12px margin each side
+        size = max(160, available)
+        self._thumb_label.setFixedSize(size, size)
+        # Refresh thumbnail at new size if one is loaded
+        if self._current_record:
+            px = self._cache.get(
+                self._current_record["id"],
+                self._current_record["filepath"],
+                self._current_record["file_type"],
+            )
+            self._thumb_label.setPixmap(
+                px.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
+            )
 
     def _open_file(self):
         if self._current_record:

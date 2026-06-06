@@ -88,11 +88,11 @@ QPushButton {
 QPushButton:hover { background-color: #4a4a4a; }
 QPushButton:pressed { background-color: #2a2a2a; }
 QPushButton#primaryBtn {
-    background-color: #0e639c;
-    border-color: #0e639c;
+    background-color: #7c6af7;
+    border-color: #7c6af7;
     color: #ffffff;
 }
-QPushButton#primaryBtn:hover { background-color: #1177bb; }
+QPushButton#primaryBtn:hover { background-color: #9480ff; }
 
 /* ── Labels ── */
 QLabel#sectionHeader {
