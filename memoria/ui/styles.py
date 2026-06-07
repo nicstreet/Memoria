@@ -106,9 +106,8 @@ QMenu {{
     background: #252526;
     color: #d4d4d4;
     border: 1px solid #444;
-    min-width: 220px;
 }}
-QMenu::item           {{ padding: 4px 24px 4px 6px; }}
+QMenu::item           {{ padding: 4px 24px 4px 6px; min-width: 200px; }}
 QMenu::item:selected  {{ background: {a_dim}; }}
 QMenu::icon           {{ padding-left: 6px; width: 14px; }}
 QMenu::separator      {{ height: 1px; background: #444; margin: 4px 0; }}
@@ -195,6 +194,62 @@ QLabel#sectionHeader {{
 
 /* ── Splitter ── */
 QSplitter::handle {{ background: #333; width: 1px; height: 1px; }}
+
+/* ── Custom title bar ── */
+#topBar {{
+    background: #252526;
+    border-bottom: 1px solid #333;
+}}
+#topBar #embeddedMenuBar {{
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: #d4d4d4;
+}}
+#topBar #embeddedMenuBar::item {{
+    padding: 4px 10px;
+    background: transparent;
+    border-radius: 3px;
+}}
+#topBar #embeddedMenuBar::item:selected {{
+    background: #37373d;
+}}
+#topBarBtn {{
+    background: transparent;
+    border: none;
+    color: #aaa;
+    padding: 0;
+    border-radius: 0;
+    font-size: 13px;
+}}
+#topBarBtn:hover {{ background: #3a3a3a; color: #fff; }}
+#topBarBtn:pressed {{ background: #2a2a2a; }}
+#topBarBtn::menu-indicator {{ width: 0; image: none; }}
+#winBtn {{
+    background: transparent;
+    border: none;
+    color: #d4d4d4;
+    border-radius: 0;
+    padding: 0;
+}}
+#winBtn:hover {{ background: #3a3a3a; }}
+#winBtn:pressed {{ background: #555; }}
+#winBtnClose {{
+    background: transparent;
+    border: none;
+    color: #d4d4d4;
+    border-radius: 0;
+    padding: 0;
+}}
+#winBtnClose:hover {{ background: #c42b1c; color: #ffffff; }}
+#winBtnClose:pressed {{ background: #e81123; color: #ffffff; }}
+
+/* ── Grid toolbar (Select All / Select None) ── */
+#gridToolbar {{
+    background: #252526;
+    border-bottom: 1px solid #2e2e2e;
+}}
+
 """
 
 

@@ -82,6 +82,7 @@ class fi:
     FILTER          = ""   # Filter
     SORT            = ""   # Sort
     INFO            = ""   # Info
+    HELP            = ""   # Help / question mark circle
     WARNING         = ""   # Warning
     SCAN            = ""   # Scan / Index
 
@@ -92,17 +93,35 @@ class fi:
     LOCATION  = ""   # Location
     GLOBE     = ""   # Globe
 
+    # Window chrome — explicit codepoints for custom title bar
+    CHROME_MINIMIZE = ""   # ChromeMinimize  (-)
+    CHROME_MAXIMIZE = ""   # ChromeMaximize  (□)
+    CHROME_RESTORE  = ""   # ChromeRestore   (❐)
+    CHROME_CLOSE    = ""   # ChromeClose     (✕)
+
 
 # ── QIcon factory ─────────────────────────────────────────────────────────────
 
-def make_icon(glyph: str, size: int = 13,
+def make_icon(glyph: str, size: int = 16,
               colour: str = "#d4d4d4") -> QIcon:
-    """Render a Segoe glyph onto a transparent QPixmap and return a QIcon."""
-    px = QPixmap(size, size)
+    """Render a Segoe glyph as a crisp HiDPI-aware QIcon.
+
+    Creates the pixmap at the screen's physical pixel size and sets
+    devicePixelRatio so Qt treats it as `size` logical pixels — no
+    scaling step, so glyphs stay sharp at any DPI.
+    """
+    from PyQt6.QtWidgets import QApplication
+    dpr = QApplication.primaryScreen().devicePixelRatio() if QApplication.instance() else 1.0
+    phys = int(size * dpr)          # physical pixel dimensions
+
+    px = QPixmap(phys, phys)
+    px.setDevicePixelRatio(dpr)     # tell Qt: this is `size` logical px
     px.fill(Qt.GlobalColor.transparent)
+
     p = QPainter(px)
     p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-    p.setFont(QFont(FONT_NAME, size - 2))
+    # Draw in logical coordinates (Qt maps to physical automatically)
+    p.setFont(QFont(FONT_NAME, int(size * 0.7)))
     p.setPen(QColor(colour))
     p.drawText(QRect(0, 0, size, size), Qt.AlignmentFlag.AlignCenter, glyph)
     p.end()
