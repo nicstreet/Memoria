@@ -23,5 +23,8 @@ ffmpeg-python>=0.2.0
 # Reverse geocoding (offline-capable)
 reverse_geocoder>=1.5.1
 
+# Recycle Bin support for duplicate deletion
+send2trash>=1.8.0
+
 # Utilities
 numpy>=1.24.0

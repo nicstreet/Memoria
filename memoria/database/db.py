@@ -22,7 +22,30 @@ def get_engine():
             dbapi_conn.execute("PRAGMA foreign_keys=ON")
 
         Base.metadata.create_all(_engine)
+        _migrate(_engine)
     return _engine
+
+
+def _migrate(engine):
+    """Add columns introduced after initial schema creation (idempotent)."""
+    new_columns = [
+        ("metadata", "title",   "TEXT"),
+        ("metadata", "subject", "TEXT"),
+        ("files",    "renamed", "INTEGER NOT NULL DEFAULT 0"),
+    ]
+    with engine.connect() as conn:
+        for table, col, col_type in new_columns:
+            existing = [
+                row[1] for row in
+                conn.execute(__import__("sqlalchemy").text(f"PRAGMA table_info({table})"))
+            ]
+            if col not in existing:
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"
+                    )
+                )
+                conn.commit()
 
 
 def get_session_factory() -> sessionmaker:

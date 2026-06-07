@@ -241,17 +241,18 @@ class FaceNamingDialog(QDialog):
         rows = (
             self._session.query(FaceDetection.cluster_id, func.count(FaceDetection.id))
             .filter(FaceDetection.cluster_id.isnot(None),
-                    FaceDetection.cluster_id >= 0)
+                    FaceDetection.cluster_id >= 0,
+                    FaceDetection.person_id.is_(None))   # skip already-named clusters
             .group_by(FaceDetection.cluster_id)
             .order_by(func.count(FaceDetection.id).desc())
             .all()
         )
 
         if not rows:
-            self._status.setText("No face clusters found. Run 'cluster-faces' from the CLI first.")
+            self._status.setText("All clusters named! Run 'cluster-faces' again to find new ones.")
             return
 
-        self._status.setText(f"{len(rows)} cluster{'s' if len(rows) != 1 else ''} found")
+        self._status.setText(f"{len(rows)} unnamed cluster{'s' if len(rows) != 1 else ''} remaining")
 
         col = 0
         row = 0

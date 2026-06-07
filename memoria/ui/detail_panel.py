@@ -4,9 +4,9 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImageReader
+from PyQt6.QtGui import QFont, QPixmap, QImageReader
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QCompleter, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton,
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -127,8 +127,7 @@ class DetailPanel(QWidget):
     def __init__(self, thumbnail_cache: ThumbnailCache, parent=None):
         super().__init__(parent)
         self.setObjectName("detailPanel")
-        self.setMinimumWidth(184)
-        self.setMaximumWidth(320)
+        self.setMinimumWidth(160)
         self._cache = thumbnail_cache
         self._current_record: dict | None = None
         self._current_meta: dict | None = None
@@ -156,16 +155,100 @@ class DetailPanel(QWidget):
         self._thumb_label.setStyleSheet("background:#1a1a1a; border-radius:4px;")
         layout.addWidget(self._thumb_label)
 
-        # Filename
+        # Filename — same font/size as metadata values
         self._title = QLabel("Select a photo")
-        self._title.setObjectName("detailTitle")
         self._title.setWordWrap(True)
+        self._title.setStyleSheet("color:#d4d4d4; font-size:12px;")
         layout.addWidget(self._title)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet("color: #444;")
         layout.addWidget(sep)
+
+        # ── Status bar ────────────────────────────────────────────────────────
+        self._status_widget = QWidget()
+        self._status_widget.setStyleSheet("background: transparent;")
+        status_row = QHBoxLayout(self._status_widget)
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(6)
+
+        self._dot_title   = QLabel()
+        self._dot_subject = QLabel()
+        self._dot_face    = QLabel()
+        self._dot_renamed = QLabel()
+        self._status_score_lbl = QLabel()
+        self._status_score_lbl.setStyleSheet("color:#777; font-size:10px;")
+
+        for dot in (self._dot_title, self._dot_subject,
+                    self._dot_face, self._dot_renamed):
+            dot.setFixedSize(14, 14)
+            dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dot.setStyleSheet("font-size:11px;")
+            status_row.addWidget(dot)
+
+        status_row.addWidget(self._status_score_lbl)
+        status_row.addStretch()
+        layout.addWidget(self._status_widget)
+        self._status_widget.hide()
+
+        # ── Title input ───────────────────────────────────────────────────────
+        self._title_input = QLineEdit()
+        self._title_input.setPlaceholderText("Title…")
+        self._title_input.setStyleSheet("""
+            QLineEdit {
+                background: #3a3a3a; border: 1px solid #555;
+                border-radius: 4px; color: #d4d4d4; padding: 3px 6px; font-size:11px;
+            }
+            QLineEdit:focus { border-color: #7c6af7; }
+        """)
+        self._title_input.editingFinished.connect(self._on_title_changed)
+        layout.addWidget(self._title_input)
+
+        # ── Subject input + dropdown ──────────────────────────────────────────
+        subject_row = QHBoxLayout()
+        subject_row.setSpacing(4)
+        subject_row.setContentsMargins(0, 0, 0, 0)
+
+        self._subject_input = QLineEdit()
+        self._subject_input.setPlaceholderText("Subject…")
+        self._subject_input.setStyleSheet("""
+            QLineEdit {
+                background: #3a3a3a; border: 1px solid #555;
+                border-radius: 4px; color: #d4d4d4; padding: 3px 6px; font-size:11px;
+            }
+            QLineEdit:focus { border-color: #7c6af7; }
+        """)
+        self._subject_input.editingFinished.connect(self._on_subject_changed)
+
+        # QCompleter for type-ahead
+        from memoria.ui.default_subjects import ALL_SUBJECTS
+        _completer = QCompleter(ALL_SUBJECTS, self._subject_input)
+        _completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        _completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self._subject_input.setCompleter(_completer)
+
+        subject_row.addWidget(self._subject_input)
+
+        # Dropdown ▾ — hierarchical subject menu
+        self._subj_drop_btn = QPushButton("▾")
+        self._subj_drop_btn.setFixedSize(24, 24)
+        self._subj_drop_btn.setToolTip("Choose from default subjects")
+        self._subj_drop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._subj_drop_btn.setStyleSheet(
+            "QPushButton { background:#3a3a3a; border:1px solid #555;"
+            "  border-radius:4px; color:#aaa; font-size:11px; padding:0; }"
+            "QPushButton:hover { background:#4a4a4a; color:#fff; }"
+        )
+        self._subj_drop_btn.clicked.connect(self._show_subject_menu)
+        subject_row.addWidget(self._subj_drop_btn)
+
+        layout.addLayout(subject_row)
+
+        sep1b = QFrame()
+        sep1b.setFrameShape(QFrame.Shape.HLine)
+        sep1b.setStyleSheet("color: #444;")
+        layout.addWidget(sep1b)
 
         # Add tag input — above metadata so personalisation is first action
         tag_row = QHBoxLayout()
@@ -240,21 +323,44 @@ class DetailPanel(QWidget):
         )
 
         self._title.setText(record.get("filename", ""))
+
+        # Title / subject / status
+        self._title_input.blockSignals(True)
+        self._subject_input.blockSignals(True)
+        self._title_input.setText(meta.get("title") or "" if meta else "")
+        self._subject_input.setText(meta.get("subject") or "" if meta else "")
+        self._title_input.blockSignals(False)
+        self._subject_input.blockSignals(False)
+        if record.get("file_type") == "photo":
+            self._title_input.show()
+            self._subject_input.show()
+            self._subj_drop_btn.show()
+            self._status_widget.show()
+            self._refresh_status()
+        else:
+            self._title_input.hide()
+            self._subject_input.hide()
+            self._subj_drop_btn.hide()
+            self._status_widget.hide()
+
         self._clear_meta()
 
         # Metadata rows
-        self._add_meta("Type", record.get("file_type", "").capitalize())
+        # Type + dimensions on one line
+        file_type = record.get("file_type", "").capitalize()
+        if meta and meta.get("width") and meta.get("height"):
+            self._add_meta("Type", f"{file_type}  ({meta['width']} × {meta['height']})")
+        else:
+            self._add_meta("Type", file_type)
 
         date = meta.get("date_taken") if meta else record.get("date_taken")
         if date:
-            self._add_meta("Date taken", date.strftime("%Y-%m-%d  %H:%M"))
+            self._add_meta("Date taken", date.strftime("%d/%m/%Y - %H:%M"))
 
         if meta:
             if meta.get("camera_make") or meta.get("camera_model"):
                 camera = " ".join(filter(None, [meta.get("camera_make"), meta.get("camera_model")]))
                 self._add_meta("Camera", camera)
-            if meta.get("width") and meta.get("height"):
-                self._add_meta("Dimensions", f"{meta['width']} × {meta['height']} px")
             if record.get("file_type") == "photo":
                 orientation = _get_orientation_label(record["filepath"])
                 if orientation:
@@ -271,7 +377,6 @@ class DetailPanel(QWidget):
         if self._session:
             self._add_people(record["id"])
 
-
         try:
             size = Path(record["filepath"]).stat().st_size
             self._add_meta("File size", _fmt_size(size))
@@ -280,16 +385,27 @@ class DetailPanel(QWidget):
 
         self._add_meta("Path", record.get("filepath", ""), small=True)
 
-        # Tags
+        # Tags — shown both as inline text in metadata and as removable chips below
+        if self._session:
+            self._add_tags_meta(record["id"])
+
         self._refresh_tags(record["id"])
 
         self._open_btn.setEnabled(True)
+        # Only show face review for photos that have been face-scanned
+        is_photo = record.get("file_type") == "photo"
 
     def clear(self):
         self._current_record = None
         self._thumb_label.clear()
         self._thumb_label.setStyleSheet("background:#1a1a1a; border-radius:4px;")
         self._title.setText("Select a photo")
+        self._title_input.clear()
+        self._subject_input.clear()
+        self._title_input.hide()
+        self._subject_input.hide()
+        self._subj_drop_btn.hide()
+        self._status_widget.hide()
         self._clear_meta()
         self._clear_tags()
         self._open_btn.setEnabled(False)
@@ -302,9 +418,12 @@ class DetailPanel(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-    def _add_meta(self, label: str, value: str, small: bool = False):
+    def _add_meta(self, label: str, value: str, small: bool = False,
+                  prop: tuple | None = None):
         row = QWidget()
         row.setStyleSheet("background: transparent;")
+        if prop:
+            row.setProperty(prop[0], prop[1])
         v = QVBoxLayout(row)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(1)
@@ -331,37 +450,54 @@ class DetailPanel(QWidget):
         hdr.setStyleSheet("color:#555; font-size:10px; font-weight:bold;")
         v.addWidget(hdr)
 
-        # Location label (same style as other metadata values)
+        # Location text + optional map icon on the same row
         display = label or (f"{lat:.4f}, {lon:.4f}" if lat is not None else "Unknown")
         loc_lbl = QLabel(display)
         loc_lbl.setWordWrap(True)
         loc_lbl.setStyleSheet("color:#d4d4d4; font-size:12px;")
-        v.addWidget(loc_lbl)
 
-        # Open in Maps button — only shown when GPS coords are available
         if lat is not None and lon is not None:
-            maps_btn = QPushButton("Open in Maps")
-            maps_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #3a3a3a; color: #d4d4d4;
-                    border: 1px solid #555; border-radius: 4px;
-                    padding: 5px 12px;
-                }
-                QPushButton:hover { background-color: #4a4a4a; }
-                QPushButton:pressed { background-color: #2a2a2a; }
-            """)
-            maps_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            maps_btn.clicked.connect(
-                lambda: os.startfile(f"https://maps.google.com/?q={lat},{lon}")
+            from memoria.ui.fluent_icons import fi, FONT_NAME
+            map_btn = QPushButton(fi.MAP_PIN)
+            map_btn.setFont(QFont(FONT_NAME, 13))
+            map_btn.setFixedSize(26, 26)
+            map_btn.setToolTip(f"Open in Maps ({lat:.4f}, {lon:.4f})")
+            map_btn.setStyleSheet(
+                "QPushButton { background:#3a3a3a; color:#d4d4d4; border:1px solid #555;"
+                "              border-radius:4px; padding:0; }"
+                "QPushButton:hover { background:#4a4a4a; }"
             )
-            v.addWidget(maps_btn)
+            map_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            map_btn.clicked.connect(
+                lambda checked=False, la=lat, lo=lon:
+                    os.startfile(f"https://maps.google.com/?q={la},{lo}")
+            )
+            loc_row = QHBoxLayout()
+            loc_row.setContentsMargins(0, 0, 0, 0)
+            loc_row.setSpacing(4)
+            loc_row.addWidget(loc_lbl, stretch=1)
+            loc_row.addWidget(map_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+            v.addLayout(loc_row)
+        else:
+            v.addWidget(loc_lbl)
 
         self._meta_layout.insertWidget(self._meta_layout.count() - 1, row)
 
     def _refresh_tags_meta(self):
-        """Refresh tags display in metadata — now just delegates to _refresh_tags."""
+        """Refresh both the inline tags metadata row and the chip row."""
         if self._current_record:
+            self._remove_tags_meta_widget()
+            self._add_tags_meta(self._current_record["id"])
             self._refresh_tags(self._current_record["id"])
+
+    def _remove_tags_meta_widget(self):
+        """Remove the plain-text Tags metadata row if present."""
+        for i in range(self._meta_layout.count()):
+            item = self._meta_layout.itemAt(i)
+            if item and item.widget() and item.widget().property("is_tags_meta"):
+                w = self._meta_layout.takeAt(i).widget()
+                w.deleteLater()
+                return
 
     def _add_tags_meta(self, file_id: int):
         """Show current tags as a comma-separated line in the metadata section."""
@@ -375,7 +511,8 @@ class DetailPanel(QWidget):
                 .all()
             )
             if rows:
-                self._add_meta("Tags", ", ".join(r.label for r in rows))
+                self._add_meta("Tags", ", ".join(r.label for r in rows),
+                               prop=("is_tags_meta", True))
         except Exception:
             pass
 
@@ -425,10 +562,6 @@ class DetailPanel(QWidget):
             v = QVBoxLayout(container)
             v.setContentsMargins(0, 0, 0, 0)
             v.setSpacing(2)
-
-            hdr = QLabel("Tags")
-            hdr.setStyleSheet("color:#555; font-size:10px; font-weight:bold;")
-            v.addWidget(hdr)
 
             if rows:
                 row_widget = None
@@ -483,6 +616,8 @@ class DetailPanel(QWidget):
             self._refresh_tags(self._current_record["id"])
             self._refresh_tags_meta()
             self.tag_added.emit(self._current_record["id"], label)
+            self._sync_tags_to_file()
+            self._refresh_status()
         except Exception as e:
             self._session.rollback()
 
@@ -498,8 +633,30 @@ class DetailPanel(QWidget):
             self._refresh_tags(self._current_record["id"])
             self._refresh_tags_meta()
             self.tag_removed.emit(self._current_record["id"], tag_id)
+            self._sync_tags_to_file()
         except Exception:
             self._session.rollback()
+
+    def _sync_tags_to_file(self):
+        """Write the current tag set for the displayed photo to its EXIF/IPTC metadata."""
+        if not self._current_record or not self._session:
+            return
+        if self._current_record.get("file_type") != "photo":
+            return
+        try:
+            from memoria.database.models import FileTag, Tag
+            from memoria.exif_writer import write_tags_to_file
+            rows = (
+                self._session.query(Tag.label)
+                .join(FileTag, FileTag.tag_id == Tag.id)
+                .filter(FileTag.file_id == self._current_record["id"])
+                .order_by(Tag.label)
+                .all()
+            )
+            tags = [r.label for r in rows]
+            write_tags_to_file(self._current_record["filepath"], tags)
+        except Exception as e:
+            log.warning(f"Could not sync tags to file: {e}")
 
     # ── Resize / open ─────────────────────────────────────────────────────────
 
@@ -520,6 +677,153 @@ class DetailPanel(QWidget):
                 px.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
                           Qt.TransformationMode.SmoothTransformation)
             )
+
+    # ── Title / subject / status ──────────────────────────────────────────────
+
+    def _on_title_changed(self):
+        if not self._current_record or not self._session:
+            return
+        self._save_meta_field("title", self._title_input.text().strip())
+
+    def _on_subject_changed(self):
+        if not self._current_record or not self._session:
+            return
+        self._save_meta_field("subject", self._subject_input.text().strip())
+
+    def _save_meta_field(self, field: str, value: str):
+        from memoria.database.models import Metadata
+        try:
+            meta = self._session.query(Metadata).filter_by(
+                file_id=self._current_record["id"]
+            ).first()
+            if meta is None:
+                meta = Metadata(file_id=self._current_record["id"])
+                self._session.add(meta)
+            setattr(meta, field, value or None)
+            self._session.commit()
+            # Keep current_meta in sync so status is correct
+            if self._current_meta is not None:
+                self._current_meta[field] = value or None
+            # Write title/subject to EXIF
+            self._sync_title_subject_exif(meta)
+            self._refresh_status()
+        except Exception as e:
+            self._session.rollback()
+            log.warning(f"Could not save {field}: {e}")
+
+    def _sync_title_subject_exif(self, meta):
+        """Write title and subject to the file's EXIF metadata via exiftool."""
+        if not self._current_record:
+            return
+        if self._current_record.get("file_type") != "photo":
+            return
+        try:
+            import subprocess
+            from memoria.exif_writer import _exiftool_path
+            tool = _exiftool_path()
+            if not tool:
+                return
+            title   = getattr(meta, "title",   None) or ""
+            subject = getattr(meta, "subject", None) or ""
+            args = [
+                tool, "-overwrite_original", "-charset", "UTF8",
+                f"-IPTC:ObjectName={title}",
+                f"-XMP-dc:Title={title}",
+                f"-IPTC:Caption-Abstract={subject}",
+                f"-XMP-dc:Description={subject}",
+                self._current_record["filepath"],
+            ]
+            subprocess.run(args, capture_output=True, timeout=15)
+        except Exception as e:
+            log.warning(f"Could not write title/subject to EXIF: {e}")
+
+    def _refresh_status(self):
+        """Recompute the 4-dot status row and trigger auto-rename if ready."""
+        if not self._current_record or not self._session:
+            return
+        from memoria.file_status import compute_status, maybe_auto_rename
+
+        st = compute_status(self._current_record["id"], self._session)
+
+        from memoria.ui.theme import accent
+        a = accent()
+
+        def _dot(ok: bool, na: bool = False) -> str:
+            return "—" if na else ("●" if ok else "○")
+
+        def _style(ok: bool, na: bool = False) -> str:
+            if na:  return "color:#555; font-size:12px;"
+            if ok:  return f"color:{a}; font-size:12px;"
+            return          "color:#555; font-size:12px;"
+
+        face_na = st["face_detail"] == "none"
+
+        dots = [
+            (self._dot_title,   st["has_title"],   False,   "Title"),
+            (self._dot_subject, st["has_subject"],  False,   "Subject"),
+            (self._dot_face,    st["face_ok"],      face_na, "Named face" if not face_na else "No faces"),
+            (self._dot_renamed, st["renamed"],      False,   "Renamed"),
+        ]
+        for lbl, ok, na, tip in dots:
+            lbl.setText(_dot(ok, na))
+            lbl.setStyleSheet(_style(ok, na))
+            lbl.setToolTip(tip)
+
+        self._status_score_lbl.setText(f"{st['score']}/4")
+
+        # Auto-rename when conditions 1–3 met and not yet renamed
+        if not st["renamed"] and st["has_title"] and st["has_subject"] and st["face_ok"]:
+            renamed = maybe_auto_rename(self._current_record["id"], self._session)
+            if renamed:
+                # Reload file record with new filename/path
+                from memoria.database.models import File
+                fr = self._session.query(File).get(self._current_record["id"])
+                if fr:
+                    self._current_record["filepath"] = fr.filepath
+                    self._current_record["filename"]  = fr.filename
+                    self._title.setText(fr.filename)
+                self._refresh_status()
+
+    def _show_subject_menu(self):
+        """Pop up a hierarchical menu of default subjects."""
+        from memoria.ui.default_subjects import SUBJECT_CATEGORIES
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background:#252526; color:#d4d4d4;
+                border:1px solid #444; border-radius:4px;
+            }
+            QMenu::item { padding:4px 24px 4px 12px; font-size:12px; }
+            QMenu::item:selected { background:#5a4fd4; color:#fff; }
+            QMenu::separator { height:1px; background:#444; margin:3px 0; }
+        """)
+        for category, subjects in SUBJECT_CATEGORIES:
+            sub = menu.addMenu(category)
+            sub.setStyleSheet(menu.styleSheet())
+            for subject in subjects:
+                act = sub.addAction(subject)
+                act.triggered.connect(
+                    lambda checked=False, s=subject: self._set_subject(s)
+                )
+        menu.exec(self._subj_drop_btn.mapToGlobal(
+            self._subj_drop_btn.rect().bottomLeft()
+        ))
+
+    def _set_subject(self, subject: str):
+        """Set the subject input and immediately save."""
+        self._subject_input.setText(subject)
+        self._on_subject_changed()
+
+    def _open_face_review(self):
+        if not self._current_record or not self._session:
+            return
+        from memoria.ui.face_review import FaceReviewDialog
+        dlg = FaceReviewDialog(self._session, self._current_record, parent=self)
+        dlg.people_changed.connect(lambda: self._add_people(self._current_record["id"]))
+        dlg.exec()
+        # Refresh people and tags in case assignments changed
+        self._clear_meta()
+        self.show_file(self._current_record, self._current_meta)
 
     def _open_file(self):
         if self._current_record:

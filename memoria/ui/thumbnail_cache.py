@@ -178,6 +178,23 @@ class ThumbnailCache(QObject):
         self._pending.discard(file_id)
         self.thumbnail_ready.emit(file_id, px)
 
+    def invalidate(self, file_id: int, filepath: str, file_type: str):
+        """Evict from memory + disk cache, then re-queue thumbnail generation."""
+        self._cache.pop(file_id, None)
+        self._pending.discard(file_id)
+        disk = _thumb_path(file_id)
+        if disk.exists():
+            try:
+                disk.unlink()
+            except OSError:
+                pass
+        # Re-generate immediately so the grid updates
+        self._pending.add(file_id)
+        worker = ThumbnailWorker(file_id, filepath, file_type)
+        worker.signals.done.connect(self._on_done)
+        worker.signals.error.connect(self._on_error)
+        self._pool.start(worker)
+
     def _on_error(self, file_id: int):
         self._pending.discard(file_id)
         self._cache[file_id] = placeholder_pixmap()

@@ -29,6 +29,7 @@ class File(Base):
     created_at = Column(DateTime)                     # OS ctime
     indexed_at = Column(DateTime, default=datetime.utcnow)
     face_scanned_at = Column(DateTime)                   # null = not yet face-scanned
+    renamed = Column(Boolean, default=False, nullable=False, server_default="0")
 
     metadata_ = relationship(
         "Metadata", back_populates="file", uselist=False, cascade="all, delete-orphan"
@@ -61,6 +62,8 @@ class Metadata(Base):
     height = Column(Integer)
     duration_seconds = Column(Float)                  # videos only
     phash = Column(Text)                              # imagehash hex string
+    title = Column(Text)                              # user-set title
+    subject = Column(Text)                            # user-set subject
 
     file = relationship("File", back_populates="metadata_")
 
@@ -146,3 +149,33 @@ class WatchedFolder(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     path = Column(Text, unique=True, nullable=False)
     added_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SubjectCategory(Base):
+    __tablename__ = "subject_categories"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    name       = Column(Text, unique=True, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+
+    subjects = relationship(
+        "Subject", back_populates="category",
+        cascade="all, delete-orphan",
+        order_by="Subject.sort_order",
+    )
+
+
+class Subject(Base):
+    __tablename__ = "subjects"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    category_id = Column(Integer, ForeignKey("subject_categories.id", ondelete="CASCADE"),
+                         nullable=False)
+    name        = Column(Text, nullable=False)
+    sort_order  = Column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("category_id", "name", name="uq_subject_per_category"),
+    )
+
+    category = relationship("SubjectCategory", back_populates="subjects")

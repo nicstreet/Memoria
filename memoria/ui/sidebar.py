@@ -13,30 +13,80 @@ from PyQt6.QtWidgets import (
 log = logging.getLogger(__name__)
 
 from memoria.ui.icons import arrow_down_path as _arrow_down_path
+
+
+class _WrappingCheck(QWidget):
+    """
+    A checkbox whose label word-wraps when the panel is narrow.
+    QCheckBox itself has no setWordWrap, so we pair a bare indicator
+    with a clickable QLabel.
+    """
+    stateChanged = pyqtSignal(int)
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        self._cb = QCheckBox()
+        self._cb.stateChanged.connect(self.stateChanged)
+        row.addWidget(self._cb, alignment=Qt.AlignmentFlag.AlignTop)
+
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("color: #d4d4d4; font-size: 12px;")
+        lbl.mousePressEvent = lambda _: self._cb.toggle()
+        lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.addWidget(lbl, stretch=1)
+
+    def isChecked(self) -> bool:
+        return self._cb.isChecked()
+
+    def setChecked(self, v: bool):
+        self._cb.setChecked(v)
+
+    def setToolTip(self, text: str):       # forward to widget
+        self._cb.setToolTip(text)
+        super().setToolTip(text)
 _ARROW_URL = f"url({_arrow_down_path()})"
 
 
 class _Section(QWidget):
-    """Sidebar section with a styled header and body."""
+    """Sidebar section with an icon + styled header and body."""
 
-    def __init__(self, title: str, parent=None, first: bool = False):
+    def __init__(self, title: str, icon: str = "", parent=None, first: bool = False):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(6)
 
-        # Separator line above header — skip for the first section
         if not first:
             line = QFrame()
             line.setFrameShape(QFrame.Shape.HLine)
             line.setStyleSheet("color: #333;")
             layout.addWidget(line)
 
+        hdr_row = QHBoxLayout()
+        hdr_row.setContentsMargins(0, 0, 0, 0)
+        hdr_row.setSpacing(5)
+
+        if icon:
+            from memoria.ui.fluent_icons import FONT_NAME
+            from PyQt6.QtGui import QFont
+            icon_lbl = QLabel(icon)
+            icon_lbl.setFont(QFont(FONT_NAME, 11))
+            icon_lbl.setStyleSheet("color: #aaa; background: transparent;")
+            icon_lbl.setFixedWidth(16)
+            hdr_row.addWidget(icon_lbl)
+
         hdr = QLabel(title)
         hdr.setStyleSheet(
             "color: #aaa; font-size: 12px; font-weight: 600; padding: 2px 0;"
         )
-        layout.addWidget(hdr)
+        hdr_row.addWidget(hdr, stretch=1)
+        layout.addLayout(hdr_row)
 
         self._body = QWidget()
         self._body.setStyleSheet("background: transparent;")
@@ -59,8 +109,7 @@ class SidebarFilters(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("sidebar")
-        self.setMinimumWidth(184)   # 12px margin + content + 12px margin, matches Clear button
-        self.setMaximumWidth(320)
+        self.setMinimumWidth(160)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -85,6 +134,7 @@ class SidebarFilters(QWidget):
         self._build_people()
         self._build_tags()
         self._build_duplicates()
+        self._build_unidentified()
         self._layout.addStretch()
 
         scroll.setWidget(content)
@@ -104,7 +154,8 @@ class SidebarFilters(QWidget):
     # ── Section builders ─────────────────────────────────────────────────────
 
     def _build_search(self):
-        sec = _Section("Search", first=True)
+        from memoria.ui.fluent_icons import fi
+        sec = _Section("Search", icon=fi.SEARCH, first=True)
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Filename…")
         self._search_input.setStyleSheet("""
@@ -119,7 +170,8 @@ class SidebarFilters(QWidget):
         self._layout.addWidget(sec)
 
     def _build_file_type(self):
-        sec = _Section("File Type")
+        from memoria.ui.fluent_icons import fi
+        sec = _Section("File Type", icon=fi.PHOTO)
         row = QHBoxLayout()
         row.setSpacing(4)
         self._type_buttons: dict[str, QPushButton] = {}
@@ -142,10 +194,10 @@ class SidebarFilters(QWidget):
         self._layout.addWidget(sec)
 
     def _build_date_range(self):
-        sec = _Section("Date Range")
+        from memoria.ui.fluent_icons import fi
+        sec = _Section("Date Range", icon=fi.CALENDAR)
 
-        self._date_enabled = QCheckBox("Filter by date")
-        self._date_enabled.setStyleSheet("color: #d4d4d4;")
+        self._date_enabled = _WrappingCheck("Filter by date")
         self._date_enabled.stateChanged.connect(self._on_date_enabled)
         self._date_enabled.stateChanged.connect(self._emit)
         sec.body().addWidget(self._date_enabled)
@@ -202,7 +254,8 @@ class SidebarFilters(QWidget):
         self._layout.addWidget(sec)
 
     def _build_location(self):
-        self._location_section = _Section("Location")
+        from memoria.ui.fluent_icons import fi
+        self._location_section = _Section("Location", icon=fi.MAP_PIN)
         self._location_combo = QComboBox()
         self._location_combo.addItem("All locations", None)
         self._location_combo.setStyleSheet(f"""
@@ -228,9 +281,10 @@ class SidebarFilters(QWidget):
         self._layout.addWidget(self._location_section)
 
     def _build_people(self):
-        self._people_section = _Section("People")
+        from memoria.ui.fluent_icons import fi
+        self._people_section = _Section("People", icon=fi.PERSON)
         self._people_list = QListWidget()
-        self._people_list.setFixedHeight(120)
+        self._people_list.setFixedHeight(90)
         self._people_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         self._people_list.setStyleSheet(self._list_style())
         self._people_list.itemSelectionChanged.connect(self._emit)
@@ -239,9 +293,10 @@ class SidebarFilters(QWidget):
         self._people_section.setVisible(False)
 
     def _build_tags(self):
-        self._tags_section = _Section("Tags")
+        from memoria.ui.fluent_icons import fi
+        self._tags_section = _Section("Tags", icon=fi.TAG)
         self._tags_list = QListWidget()
-        self._tags_list.setFixedHeight(100)
+        self._tags_list.setFixedHeight(90)
         self._tags_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         self._tags_list.setStyleSheet(self._list_style())
         self._tags_list.itemSelectionChanged.connect(self._emit)
@@ -250,11 +305,22 @@ class SidebarFilters(QWidget):
         self._tags_section.setVisible(False)
 
     def _build_duplicates(self):
-        sec = _Section("Duplicates")
-        self._dupes_check = QCheckBox("Show duplicates only")
-        self._dupes_check.setStyleSheet("color: #d4d4d4;")
+        from memoria.ui.fluent_icons import fi
+        sec = _Section("Duplicates", icon=fi.COPY_X)
+        self._dupes_check = _WrappingCheck("Show duplicates only")
         self._dupes_check.stateChanged.connect(self._emit)
         sec.body().addWidget(self._dupes_check)
+        self._layout.addWidget(sec)
+
+    def _build_unidentified(self):
+        from memoria.ui.fluent_icons import fi
+        sec = _Section("Faces", icon=fi.FACE)
+        self._unidentified_check = _WrappingCheck("Unidentified faces only")
+        self._unidentified_check.setToolTip(
+            "Show only photos that contain at least one face that hasn't been named yet"
+        )
+        self._unidentified_check.stateChanged.connect(self._emit)
+        sec.body().addWidget(self._unidentified_check)
         self._layout.addWidget(sec)
 
     # ── Population from DB ───────────────────────────────────────────────────
@@ -317,7 +383,8 @@ class SidebarFilters(QWidget):
             "location":        self._location_combo.currentData(),
             "people":          people_ids,
             "tags":            tag_ids,
-            "duplicates_only": self._dupes_check.isChecked(),
+            "duplicates_only":    self._dupes_check.isChecked(),
+            "unidentified_faces": self._unidentified_check.isChecked(),
         }
 
     def clear_all(self):
@@ -328,6 +395,7 @@ class SidebarFilters(QWidget):
         self._people_list.clearSelection()
         self._tags_list.clearSelection()
         self._dupes_check.setChecked(False)
+        self._unidentified_check.setChecked(False)
         self._emit()
 
     # ── Internal helpers ─────────────────────────────────────────────────────
@@ -352,6 +420,7 @@ class SidebarFilters(QWidget):
             or bool(filters["people"])
             or bool(filters["tags"])
             or filters["duplicates_only"]
+            or filters["unidentified_faces"]
         )
         self._clear_btn.setEnabled(is_active)
         self.filters_changed.emit(filters)
@@ -373,8 +442,9 @@ class SidebarFilters(QWidget):
             QListWidget {
                 background: #2a2a2a; border: 1px solid #444;
                 border-radius: 4px; color: #d4d4d4;
+                font-size: 12px;
             }
-            QListWidget::item { padding: 3px 6px; }
+            QListWidget::item { padding: 1px 6px; min-height: 20px; max-height: 20px; }
             QListWidget::item:selected { background: #5a4fd4; color: #fff; }
             QListWidget::item:hover:!selected { background: #3a3a3a; }
         """
