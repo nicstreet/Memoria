@@ -11,12 +11,13 @@ from PyQt6.QtWidgets import (
 )
 
 from memoria.database.db import get_session
-from memoria.database.models import Duplicate, File, FilePeople, FileTag, Metadata, Person, Tag
+from memoria.database.models import Duplicate, EditLog, File, FilePeople, FileTag, Metadata, Person, Tag
 from memoria.ui.detail_panel import DetailPanel
 from memoria.ui.grid_view import PhotoGridModel, PhotoGridView
 from memoria.ui.sidebar import SidebarFilters
 from memoria.ui.styles import get_dark_style
 from memoria.ui.thumbnail_cache import ThumbnailCache
+from memoria.ui.log_panel import LogPanel
 from memoria.ui.settings_store import load as load_settings, save as save_settings
 
 log = logging.getLogger(__name__)
@@ -75,6 +76,13 @@ class _TopBar(QWidget):
         self._file_btn = _menu_btn(fi.FOLDER, "File")
         self._edit_btn = _menu_btn(fi.EDIT,   "Edit")
         self._help_btn = _menu_btn(fi.HELP,   "Help")
+        # fi.HELP can render in accent colour on some Segoe variants — force muted grey
+        self._help_btn.setStyleSheet(
+            "QPushButton { color:#aaa; background:transparent; border:none; }"
+            "QPushButton:hover { background:rgba(255,255,255,0.07); }"
+            "QPushButton:pressed { background:rgba(255,255,255,0.14); }"
+            "QPushButton::menu-indicator { width:0; image:none; }"
+        )
         layout.addWidget(self._file_btn)
         layout.addWidget(self._edit_btn)
         layout.addWidget(self._help_btn)
@@ -350,7 +358,7 @@ class MainWindow(QMainWindow):
         self._bg_clear_timer.timeout.connect(self._bg_label.hide)
 
     def _build_grid_container(self) -> QWidget:
-        """Wraps the photo grid with a toolbar strip (Select All / Select None)."""
+        """Wraps the photo grid with a toolbar strip and a collapsible activity log panel."""
         container = QWidget()
         container.setObjectName("gridContainer")
         layout = QVBoxLayout(container)
@@ -386,9 +394,42 @@ class MainWindow(QMainWindow):
 
         tb_layout.addStretch()
 
+        # Activity log toggle button
+        self._log_toggle_btn = QPushButton("Activity Log")
+        self._log_toggle_btn.setFixedHeight(24)
+        self._log_toggle_btn.setCheckable(True)
+        self._log_toggle_btn.setStyleSheet(
+            btn_style +
+            "QPushButton:checked { background:#37373d; color:#fff; border-color:#7c6af7; }"
+        )
+        self._log_toggle_btn.clicked.connect(self._toggle_log_panel)
+        tb_layout.addWidget(self._log_toggle_btn)
+
         layout.addWidget(toolbar)
         layout.addWidget(self._grid_view, 1)
+
+        # Activity log panel — hidden by default
+        self._log_panel = LogPanel()
+        self._log_panel.hide()
+        self._log_panel.closed.connect(self._hide_log_panel)
+        self._log_panel.exif_write_requested.connect(
+            lambda fp, t, s: self._write_title_subject_exif(fp, t, s)
+        )
+        layout.addWidget(self._log_panel)
+
         return container
+
+    def _toggle_log_panel(self):
+        if self._log_panel.isVisible():
+            self._hide_log_panel()
+        else:
+            self._log_panel.refresh()
+            self._log_panel.show()
+            self._log_toggle_btn.setChecked(True)
+
+    def _hide_log_panel(self):
+        self._log_panel.hide()
+        self._log_toggle_btn.setChecked(False)
 
     def _build_statusbar(self):
         slider_widget = QWidget()
@@ -453,10 +494,6 @@ class MainWindow(QMainWindow):
 
         # ── File ─────────────────────────────────────────────────────────
         file_menu = QMenu(self)
-
-        open_action = QAction(make_icon(fi.FOLDER), "Open Folder…", self)
-        open_action.triggered.connect(self._open_folder)
-        file_menu.addAction(open_action)
 
         index_action = QAction(make_icon(fi.REFRESH), "Re-index folders", self)
         index_action.setShortcut("Ctrl+R")
@@ -761,6 +798,16 @@ class MainWindow(QMainWindow):
             self._session.query(FaceDetection).filter_by(file_id=file_id).delete()
             self._session.commit()
 
+            self._log_edit(
+                file_id=file_id,
+                filename=record["filename"],
+                filepath=filepath,
+                action_type="rotate",
+                new_value="90° CW",
+                source="user",
+                saved=True,
+            )
+
             self._thumbnail_cache.invalidate(file_id, filepath, record["file_type"])
             if (self._detail._current_record or {}).get("id") == file_id:
                 self._on_file_selected(record)
@@ -789,20 +836,37 @@ class MainWindow(QMainWindow):
 
     def _on_meta_field_changed(self, file_id: int, field: str, value: str):
         from memoria.database.models import Metadata, File
-        from memoria.exif_writer import write_tags_to_file
         try:
             meta = self._session.query(Metadata).filter_by(file_id=file_id).first()
+            old_val = getattr(meta, field, None) if meta else None
             if meta is None:
                 meta = Metadata(file_id=file_id)
                 self._session.add(meta)
             setattr(meta, field, value or None)
-            self._session.commit()
 
             file_row = self._session.query(File).get(file_id)
-            if file_row and file_row.file_type == "photo":
-                self._write_title_subject_exif(
-                    file_row.filepath, meta.title, meta.subject
-                )
+            self._session.commit()
+
+            # Log the change
+            self._log_edit(
+                file_id=file_id,
+                filename=file_row.filename if file_row else "",
+                filepath=file_row.filepath if file_row else "",
+                action_type=field,
+                old_value=str(old_val) if old_val is not None else "",
+                new_value=value or "",
+                source="user",
+                saved=False,
+            )
+
+            # Optionally auto-write EXIF immediately
+            settings = load_settings()
+            if settings.get("auto_write_exif", False):
+                if file_row and file_row.file_type == "photo":
+                    self._write_title_subject_exif(
+                        file_row.filepath, meta.title, meta.subject
+                    )
+                    self._mark_log_saved(file_id, field)
 
             if (self._detail._current_record or {}).get("id") == file_id:
                 if field == "title":
@@ -813,9 +877,68 @@ class MainWindow(QMainWindow):
                     self._detail._current_meta[field] = value or None
                 self._detail._refresh_status()
 
+            # Refresh log panel if visible
+            if self._log_panel.isVisible():
+                self._log_panel.refresh()
+
         except Exception as e:
             self._session.rollback()
             log.error(f"Could not save {field}: {e}")
+
+    def _log_edit(
+        self, *,
+        file_id: int | None,
+        filename: str,
+        filepath: str,
+        action_type: str,
+        old_value: str = "",
+        new_value: str = "",
+        source: str = "user",
+        saved: bool = False,
+    ):
+        """Insert one row into the edit_log table. Never raises."""
+        try:
+            session = get_session()
+            try:
+                entry = EditLog(
+                    file_id=file_id,
+                    filename=filename,
+                    filepath=filepath,
+                    action_type=action_type,
+                    old_value=old_value or None,
+                    new_value=new_value or None,
+                    source=source,
+                    saved=saved,
+                )
+                session.add(entry)
+                session.commit()
+            finally:
+                session.close()
+        except Exception as e:
+            log.warning(f"Could not write edit log: {e}")
+
+    def _mark_log_saved(self, file_id: int, action_type: str):
+        """Mark the most-recent unsaved log entry for (file_id, action_type) as saved."""
+        try:
+            session = get_session()
+            try:
+                entry = (
+                    session.query(EditLog)
+                    .filter(
+                        EditLog.file_id == file_id,
+                        EditLog.action_type == action_type,
+                        EditLog.saved == False,   # noqa: E712
+                    )
+                    .order_by(EditLog.id.desc())
+                    .first()
+                )
+                if entry:
+                    entry.saved = True
+                    session.commit()
+            finally:
+                session.close()
+        except Exception as e:
+            log.warning(f"Could not mark log entry saved: {e}")
 
     def _write_title_subject_exif(self, filepath, title, subject):
         import subprocess
@@ -1027,7 +1150,13 @@ class MainWindow(QMainWindow):
     # ── Background reassess ───────────────────────────────────────────────
 
     def trigger_background_reassess(self):
-        if self._bg_thread and self._bg_thread.isRunning():
+        try:
+            running = self._bg_thread is not None and self._bg_thread.isRunning()
+        except RuntimeError:
+            # C++ QThread object was already deleted by deleteLater — treat as not running
+            self._bg_thread = None
+            running = False
+        if running:
             self._bg_pending = True
             return
         self._bg_pending = False
@@ -1086,18 +1215,42 @@ class MainWindow(QMainWindow):
             self._bg_label.setText(f"✓  Re-assess done — {summary}")
             self._load_records()
 
+            # Log AI face assignments to the activity log
+            for action in stats.get("ai_actions", []):
+                self._log_edit(
+                    file_id=action["file_id"],
+                    filename=action["filename"],
+                    filepath=action["filepath"],
+                    action_type=action["action_type"],
+                    old_value=action.get("old_value", ""),
+                    new_value=action.get("new_value", ""),
+                    source="ai",
+                    saved=True,   # face assignments are immediately in the DB
+                )
+
+            if self._log_panel.isVisible():
+                self._log_panel.refresh()
+
         self._bg_clear_timer.start()
 
     def _on_bg_thread_finished(self):
+        # Null out the reference now, before deleteLater destroys the C++ object.
+        # This prevents RuntimeError in trigger_background_reassess if it fires
+        # after the thread is deleted but before Python's reference is cleared.
+        self._bg_thread = None
+        self._bg_worker = None
         if self._bg_pending:
             self._bg_pending = False
             self._start_bg_reassess()
 
     def closeEvent(self, event):
         save_settings({"columns": self._columns})
-        if self._bg_thread and not self._bg_thread.isFinished():
-            self._bg_pending = False
-            self._bg_thread.quit()
-            self._bg_thread.wait(5000)
+        try:
+            if self._bg_thread is not None and not self._bg_thread.isFinished():
+                self._bg_pending = False
+                self._bg_thread.quit()
+                self._bg_thread.wait(5000)
+        except RuntimeError:
+            pass  # thread already deleted — nothing to wait for
         self._session.close()
         super().closeEvent(event)

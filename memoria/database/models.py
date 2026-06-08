@@ -143,6 +143,30 @@ class FaceDetection(Base):
     person = relationship("Person")
 
 
+class EditLog(Base):
+    """Audit trail of metadata changes and AI actions.
+
+    User edits:  source='user', saved=False until written to EXIF.
+    AI actions:  source='ai',   ai_confirmed=None until user confirms/rejects.
+    """
+    __tablename__ = "edit_log"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp    = Column(DateTime, default=datetime.utcnow)
+    file_id      = Column(Integer, ForeignKey("files.id", ondelete="SET NULL"), nullable=True)
+    filename     = Column(Text)                          # denormalized — for display
+    filepath     = Column(Text)                          # denormalized — for EXIF write
+    action_type  = Column(Text, nullable=False)          # "title" | "subject" | "tag_add" | "tag_remove"
+                                                         # | "face_assign" | "rotate" | "rename"
+    old_value    = Column(Text, nullable=True)
+    new_value    = Column(Text, nullable=True)
+    source       = Column(Text, default="user")          # "user" | "ai"
+    saved        = Column(Boolean, default=False)        # True = written to EXIF
+    ai_confirmed = Column(Boolean, nullable=True)        # None=not reviewed, True=correct, False=wrong
+
+    file = relationship("File", foreign_keys=[file_id])
+
+
 class WatchedFolder(Base):
     __tablename__ = "watched_folders"
 

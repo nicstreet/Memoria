@@ -10,14 +10,29 @@ from memoria.database.models import FaceDetection, FilePeople, FileTag, Person, 
 
 log = logging.getLogger(__name__)
 
-CLUSTER_THRESHOLD = 0.4   # max euclidean distance on normalised ArcFace vectors (~cosine distance)
-MIN_CLUSTER_SIZE  = 2     # clusters smaller than this are marked as noise
+CLUSTER_THRESHOLD = 0.4   # default — overridden by settings at runtime
+MIN_CLUSTER_SIZE  = 2     # default — overridden by settings at runtime
+MATCH_THRESHOLD   = 0.6   # default — overridden by settings at runtime
 
-# Matching is deliberately more lenient than clustering.
-# Clustering wants tight, high-precision groups; matching wants to catch
-# the same person across lighting/angle/expression variation.
-# ArcFace on normalised vectors: dist 0.4 ≈ cos 0.92, dist 0.6 ≈ cos 0.82.
-MATCH_THRESHOLD = 0.6
+
+def _ai_settings() -> dict:
+    try:
+        from memoria.ui.settings_store import load
+        return load()
+    except Exception:
+        return {}
+
+
+def _cluster_threshold() -> float:
+    return float(_ai_settings().get("cluster_threshold", CLUSTER_THRESHOLD))
+
+
+def _match_threshold() -> float:
+    return float(_ai_settings().get("match_threshold", MATCH_THRESHOLD))
+
+
+def _min_cluster_size() -> int:
+    return int(_ai_settings().get("min_cluster_size", MIN_CLUSTER_SIZE))
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +144,7 @@ def run_clustering(session: Session) -> dict:
         return {"clusters": 0, "noise": 0, "faces": 0}
 
     X_norm = _cosine_normalize(embeddings)
-    labels = _union_find_cluster(X_norm, CLUSTER_THRESHOLD, MIN_CLUSTER_SIZE)
+    labels = _union_find_cluster(X_norm, _cluster_threshold(), _min_cluster_size())
 
     # Write cluster_id back — only for detections whose embedding loaded
     for list_pos, det_idx in enumerate(valid_indices):
@@ -267,7 +282,7 @@ def match_against_known_persons(
     all_persons = session.query(Person).all()
     if not all_persons:
         log.info("No named persons in DB — nothing to match against")
-        return {"matched": 0, "unmatched": 0, "people_checked": 0}
+        return {"matched": 0, "unmatched": 0, "people_checked": 0, "ai_actions": []}
 
     person_id_to_name = {p.id: p.name for p in all_persons}
     gallery: dict[int, np.ndarray] = {}   # person_id → (N, D) normalised array
@@ -303,7 +318,7 @@ def match_against_known_persons(
             "No person has usable embeddings. "
             "Ensure photos are face-scanned before naming (Library → Re-index)."
         )
-        return {"matched": 0, "unmatched": 0, "people_checked": len(all_persons)}
+        return {"matched": 0, "unmatched": 0, "people_checked": len(all_persons), "ai_actions": []}
 
     # ── Load unassigned detections ────────────────────────────────────────────
     unassigned = (
@@ -315,12 +330,12 @@ def match_against_known_persons(
 
     log.info(
         f"Matching {len(unassigned)} unassigned detection(s) against "
-        f"{len(gallery)} known person(s) — threshold {MATCH_THRESHOLD}"
+        f"{len(gallery)} known person(s) — threshold {_match_threshold()}"
     )
 
     if not unassigned:
         log.info("No unassigned face detections to match")
-        return {"matched": 0, "unmatched": 0, "people_checked": len(gallery)}
+        return {"matched": 0, "unmatched": 0, "people_checked": len(gallery), "ai_actions": []}
 
     total   = len(unassigned)
     matched = 0
@@ -331,6 +346,8 @@ def match_against_known_persons(
 
     # Track per-file pairs already added this run (duplicate guard)
     added_pairs: set[tuple[int, int]] = set()
+    # Collect (file_id, person_name, distance) for each new assignment → passed to activity log
+    assigned_pairs: list[tuple[int, str, float]] = []
 
     for i, det in enumerate(unassigned):
         _prog(i + 1, total, f"Matching face {i + 1}/{total}…")
@@ -353,7 +370,7 @@ def match_against_known_persons(
 
         distances_seen.append(best_dist)
 
-        if best_pid is not None and best_dist <= MATCH_THRESHOLD:
+        if best_pid is not None and best_dist <= _match_threshold():
             det.person_id = best_pid
             pair = (det.file_id, best_pid)
 
@@ -373,6 +390,7 @@ def match_against_known_persons(
                 added_pairs.add(pair)
 
             matched += 1
+            assigned_pairs.append((det.file_id, person_id_to_name[best_pid], best_dist))
             # Grow the gallery with confirmed matches so later detections benefit
             gallery[best_pid] = np.vstack([gallery[best_pid], vec])
 
@@ -387,13 +405,39 @@ def match_against_known_persons(
             f"Distance stats over {len(arr)} faces — "
             f"min={arr.min():.3f}  median={float(np.median(arr)):.3f}  "
             f"max={arr.max():.3f}  "
-            f"within threshold ({MATCH_THRESHOLD}): {int((arr <= MATCH_THRESHOLD).sum())}"
+            f"within threshold ({_match_threshold()}): {int((arr <= _match_threshold()).sum())}"
         )
     if missing_files:
         log.warning(f"{missing_files} detection(s) skipped — embedding file not found on disk")
 
+    # Enrich assigned_pairs with filename/filepath for the activity log
+    ai_actions: list[dict] = []
+    if assigned_pairs:
+        from memoria.database.models import File
+        file_ids = {fid for fid, _, _ in assigned_pairs}
+        file_map = {
+            f.id: (f.filename, f.filepath)
+            for f in session.query(File).filter(File.id.in_(file_ids)).all()
+        }
+        for file_id, person_name, dist in assigned_pairs:
+            fn, fp = file_map.get(file_id, ("", ""))
+            ai_actions.append({
+                "file_id":     file_id,
+                "filename":    fn,
+                "filepath":    fp,
+                "action_type": "face_assign",
+                "new_value":   person_name,
+                "old_value":   "",
+                "distance":    round(dist, 3),
+            })
+
     log.info(f"Matching complete: {matched} assigned, {unmatched} still unassigned")
-    return {"matched": matched, "unmatched": unmatched, "people_checked": len(gallery)}
+    return {
+        "matched":        matched,
+        "unmatched":      unmatched,
+        "people_checked": len(gallery),
+        "ai_actions":     ai_actions,
+    }
 
 
 def audit_person_tags(

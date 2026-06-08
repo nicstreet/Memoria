@@ -15,8 +15,25 @@ log = logging.getLogger(__name__)
 # Tell DeepFace to store its downloaded models in our app data directory
 os.environ.setdefault("DEEPFACE_HOME", str(MODELS_DIR))
 
-MODEL_NAME = "ArcFace"
-DETECTOR_BACKEND = "retinaface"
+MODEL_NAME = "ArcFace"          # fallback used before settings load
+DETECTOR_BACKEND = "retinaface"  # fallback used before settings load
+
+
+def _ai_settings() -> dict:
+    """Load current AI settings at call-time so UI changes take effect immediately."""
+    try:
+        from memoria.ui.settings_store import load
+        return load()
+    except Exception:
+        return {}
+
+
+def _model_name() -> str:
+    return _ai_settings().get("face_model", MODEL_NAME)
+
+
+def _detector_backend() -> str:
+    return _ai_settings().get("detector_backend", DETECTOR_BACKEND)
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -26,8 +43,8 @@ def _deepface_represent(img_path: str) -> list[dict]:
     from deepface import DeepFace
     return DeepFace.represent(
         img_path=img_path,
-        model_name=MODEL_NAME,
-        detector_backend=DETECTOR_BACKEND,
+        model_name=_model_name(),
+        detector_backend=_detector_backend(),
         enforce_detection=True,
         align=True,
     )

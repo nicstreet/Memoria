@@ -25,6 +25,13 @@
 
 ---
 
+## Known Fixes (pre-Stage 2)
+
+- [ ] **`?` Help button colour** — currently renders in accent colour; should use the same default muted colour (`#aaa`) as the other title bar icon buttons
+- [ ] **Options dialog button cluster padding** — OK / Cancel / Apply buttons sit too close to page content; add top padding/margin to the button row so it has breathing room from the fields above
+
+---
+
 ## Stage 2 — Collapsible Navigation & Sidebar Rail
 *Implement the Windows Photos-style navigation rail.*
 

@@ -1,5 +1,13 @@
 import logging
+import os
 import sys
+
+# Suppress TensorFlow / oneDNN startup noise before any TF import occurs.
+# These must be set before TensorFlow is imported (DeepFace triggers that).
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL",    "3")   # ERROR only
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS",   "0")   # disable oneDNN custom ops chatter
+os.environ.setdefault("ABSL_MIN_LOG_LEVEL",       "3")   # suppress absl INFO / WARNING
+os.environ.setdefault("GLOG_minloglevel",          "3")   # suppress glog messages
 
 from memoria.config import LOG_PATH
 from memoria.database.db import get_engine, get_session

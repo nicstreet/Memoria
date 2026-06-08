@@ -433,12 +433,23 @@ class _EditorPage(QWidget):
             self._fmt,
         )
 
+        # Auto-write EXIF
+        self._auto_exif = _ToggleSwitch(checked=settings.get("auto_write_exif", False))
+        group.add_row(
+            "Auto-write metadata to files",
+            "When enabled, title and subject changes are immediately written to the "
+            "file's EXIF data. When disabled, changes are saved to the database only "
+            "and can be written via the Activity Log.",
+            self._auto_exif,
+        )
+
         v.addWidget(group)
         v.addStretch()
 
     def apply(self, settings: dict):
-        settings["jpeg_quality"]  = self._quality.value()
-        settings["rename_format"] = self._fmt.text().strip()
+        settings["jpeg_quality"]   = self._quality.value()
+        settings["rename_format"]  = self._fmt.text().strip()
+        settings["auto_write_exif"] = self._auto_exif.isChecked()
 
 
 class _AppearancePage(QWidget):
@@ -571,6 +582,162 @@ class _MetadataPage(QWidget):
 
     def apply(self, settings: dict):
         self._subj_mgr.save()
+
+
+class _AIPage(QWidget):
+    """Options page — face detection and matching thresholds."""
+
+    _MODELS    = ["ArcFace", "Facenet512", "VGG-Face", "DeepFace", "OpenFace"]
+    _DETECTORS = ["retinaface", "mtcnn", "opencv", "ssd", "dlib"]
+
+    _DEFAULTS = {
+        "face_model":        "ArcFace",
+        "detector_backend":  "retinaface",
+        "match_threshold":   0.6,
+        "cluster_threshold": 0.4,
+        "min_cluster_size":  2,
+    }
+
+    def __init__(self, settings: dict, parent=None):
+        super().__init__(parent)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: #1e1e1e; }")
+        outer.addWidget(scroll)
+
+        page, v = _page_layout()
+        scroll.setWidget(page)
+
+        v.addWidget(_section_header("AI & Face Detection"))
+
+        # ── Detection settings ─────────────────────────────────────────
+        detect_group = _SettingGroup()
+
+        self._model_combo = QComboBox()
+        self._model_combo.setFixedWidth(140)
+        for m in self._MODELS:
+            self._model_combo.addItem(m)
+        idx = self._model_combo.findText(settings.get("face_model", self._DEFAULTS["face_model"]))
+        self._model_combo.setCurrentIndex(max(0, idx))
+        detect_group.add_row(
+            "Face recognition model",
+            "The neural network used to generate face embeddings. "
+            "ArcFace gives the best accuracy. Changing this requires a full re-scan.",
+            self._model_combo,
+        )
+
+        self._detector_combo = QComboBox()
+        self._detector_combo.setFixedWidth(140)
+        for d in self._DETECTORS:
+            self._detector_combo.addItem(d)
+        idx = self._detector_combo.findText(settings.get("detector_backend", self._DEFAULTS["detector_backend"]))
+        self._detector_combo.setCurrentIndex(max(0, idx))
+        detect_group.add_row(
+            "Face detector",
+            "Algorithm used to locate faces within photos. "
+            "RetinaFace is the most accurate; OpenCV is fastest. Changing this requires a full re-scan.",
+            self._detector_combo,
+        )
+
+        v.addWidget(detect_group)
+
+        # ── Matching & clustering ──────────────────────────────────────
+        v.addWidget(_section_header("Matching & Clustering"))
+
+        thresh_group = _SettingGroup()
+
+        # Match threshold slider (30–90, stored as float 0.30–0.90)
+        self._match_slider = QSlider(Qt.Orientation.Horizontal)
+        self._match_slider.setRange(30, 90)
+        self._match_slider.setValue(int(settings.get("match_threshold", self._DEFAULTS["match_threshold"]) * 100))
+        self._match_slider.setFixedWidth(200)
+        thresh_group.add_row(
+            "Face match sensitivity",
+            "How closely a face must resemble a known person to be assigned to them. "
+            "Lower = stricter (fewer false matches). Higher = more lenient (catches more matches but may confuse similar faces). Default: 0.60.",
+            self._float_slider_widget(self._match_slider),
+        )
+
+        # Cluster threshold slider (20–80)
+        self._cluster_slider = QSlider(Qt.Orientation.Horizontal)
+        self._cluster_slider.setRange(20, 80)
+        self._cluster_slider.setValue(int(settings.get("cluster_threshold", self._DEFAULTS["cluster_threshold"]) * 100))
+        self._cluster_slider.setFixedWidth(200)
+        thresh_group.add_row(
+            "Cluster grouping sensitivity",
+            "How tightly faces must match to be grouped into the same cluster. "
+            "Lower = tighter groups (fewer faces per cluster). Higher = looser groups (larger clusters, more risk of mixing people). Default: 0.40.",
+            self._float_slider_widget(self._cluster_slider),
+        )
+
+        # Min cluster size dropdown
+        self._min_size_combo = QComboBox()
+        self._min_size_combo.setFixedWidth(60)
+        for n in range(1, 11):
+            self._min_size_combo.addItem(str(n), n)
+        cur = settings.get("min_cluster_size", self._DEFAULTS["min_cluster_size"])
+        self._min_size_combo.setCurrentIndex(max(0, int(cur) - 1))
+        thresh_group.add_row(
+            "Minimum cluster size",
+            "Clusters with fewer faces than this are treated as noise and not assigned to a person. "
+            "Increase to reduce false clusters from accidental detections. Default: 2.",
+            self._min_size_combo,
+        )
+
+        v.addWidget(thresh_group)
+
+        # ── Reset button ───────────────────────────────────────────────
+        from memoria.ui.fluent_icons import fi, FONT_NAME
+        reset_btn = QPushButton(f"{fi.REFRESH}  Reset to defaults")
+        reset_btn.setFont(QFont(FONT_NAME, 11))
+        reset_btn.setFixedHeight(30)
+        reset_btn.setStyleSheet(
+            "QPushButton { background:#3a3a3a; color:#d4d4d4; border:1px solid #555; "
+            "border-radius:4px; padding:2px 12px; }"
+            "QPushButton:hover { background:#4a4a4a; }"
+        )
+        reset_btn.clicked.connect(self._reset_defaults)
+        reset_row = QHBoxLayout()
+        reset_row.addStretch()
+        reset_row.addWidget(reset_btn)
+        v.addLayout(reset_row)
+
+        v.addStretch()
+
+    def _float_slider_widget(self, slider: QSlider) -> QWidget:
+        """Slider with value label above, formatted as 0.00."""
+        w = QWidget()
+        w.setStyleSheet("background:transparent;")
+        col = QVBoxLayout(w)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(3)
+        lbl = QLabel(f"{slider.value() / 100:.2f}")
+        lbl.setStyleSheet("color:#d4d4d4; font-size:12px; background:transparent;")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        slider.valueChanged.connect(lambda v, l=lbl: l.setText(f"{v / 100:.2f}"))
+        col.addWidget(lbl)
+        col.addWidget(slider)
+        return w
+
+    def _reset_defaults(self):
+        self._model_combo.setCurrentIndex(
+            max(0, self._model_combo.findText(self._DEFAULTS["face_model"])))
+        self._detector_combo.setCurrentIndex(
+            max(0, self._detector_combo.findText(self._DEFAULTS["detector_backend"])))
+        self._match_slider.setValue(int(self._DEFAULTS["match_threshold"] * 100))
+        self._cluster_slider.setValue(int(self._DEFAULTS["cluster_threshold"] * 100))
+        self._min_size_combo.setCurrentIndex(int(self._DEFAULTS["min_cluster_size"]) - 1)
+
+    def apply(self, settings: dict):
+        settings["face_model"]        = self._model_combo.currentText()
+        settings["detector_backend"]  = self._detector_combo.currentText()
+        settings["match_threshold"]   = round(self._match_slider.value() / 100, 2)
+        settings["cluster_threshold"] = round(self._cluster_slider.value() / 100, 2)
+        settings["min_cluster_size"]  = self._min_size_combo.currentData()
 
 
 class _HotkeysPage(QWidget):
@@ -842,7 +1009,7 @@ class OptionsDialog(QDialog):
         """)
         self._section_list.setFrameShape(QListWidget.Shape.NoFrame)
 
-        for name in ("General", "Editor", "Metadata", "Appearance", "Hotkeys", "Library"):
+        for name in ("General", "Editor", "Metadata", "Appearance", "Hotkeys", "Library", "AI"):
             self._section_list.addItem(QListWidgetItem(name))
         self._section_list.setCurrentRow(0)
         self._section_list.currentRowChanged.connect(self._on_section_changed)
@@ -865,11 +1032,13 @@ class OptionsDialog(QDialog):
             _AppearancePage(self._settings),
             _HotkeysPage(),
             _LibraryPage(),
+            _AIPage(self._settings),
         ]
         for page in self._pages:
             self._stack.addWidget(page)
 
         right_layout.addWidget(self._stack, stretch=1)
+        right_layout.addSpacing(12)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |

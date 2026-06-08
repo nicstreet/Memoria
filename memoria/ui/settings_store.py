@@ -14,11 +14,20 @@ SETTINGS_FILE = APPDATA_DIR / "ui_settings.json"
 log = logging.getLogger(__name__)
 
 _DEFAULTS = {
-    "columns":        5,
-    "accent_colour":  "#7c6af7",
-    "jpeg_quality":   100,
-    "rename_format":  "%y-%m-%d_%H-%M_{subject}",
-    "show_extensions": True,
+    # UI
+    "columns":          5,
+    "accent_colour":    "#7c6af7",
+    "jpeg_quality":     100,
+    "rename_format":    "%y-%m-%d_%H-%M_{subject}",
+    "show_extensions":  True,
+    # Editor behaviour
+    "auto_write_exif":  False,
+    # AI / face detection
+    "face_model":         "ArcFace",
+    "detector_backend":   "retinaface",
+    "match_threshold":    0.6,
+    "cluster_threshold":  0.4,
+    "min_cluster_size":   2,
 }
 
 
