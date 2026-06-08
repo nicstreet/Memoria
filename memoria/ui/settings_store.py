@@ -21,7 +21,11 @@ _DEFAULTS = {
     "rename_format":    "%y-%m-%d_%H-%M_{subject}",
     "show_extensions":  True,
     # Editor behaviour
-    "auto_write_exif":  False,
+    "auto_write_exif":    False,
+    # AI caption generation
+    "ai_provider":        "gemini",
+    "ai_api_key":         "",
+    "ai_caption_model":   "gemini-1.5-flash",
     # AI / face detection
     "face_model":         "ArcFace",
     "detector_backend":   "retinaface",

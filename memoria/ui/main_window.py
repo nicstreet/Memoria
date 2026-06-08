@@ -536,6 +536,11 @@ class MainWindow(QMainWindow):
         persons_action.triggered.connect(self._open_persons)
         edit_menu.addAction(persons_action)
 
+        generate_action = QAction(make_icon(fi.SCAN), "Generate Metadata (AI)…", self)
+        generate_action.setShortcut("Ctrl+G")
+        generate_action.triggered.connect(self._open_generate_metadata)
+        edit_menu.addAction(generate_action)
+
         reassess_action = QAction(make_icon(fi.SCAN), "Re-assess photos for faces & names…", self)
         reassess_action.setShortcut("Ctrl+Shift+R")
         reassess_action.triggered.connect(self._open_reassess)
@@ -1172,6 +1177,35 @@ class MainWindow(QMainWindow):
         s = load_settings()
         if s.get("columns") != self._columns:
             self._set_columns(s["columns"])
+
+    def _open_generate_metadata(self):
+        from memoria.ui.generate_metadata_dialog import GenerateMetadataDialog
+        # Use selected photos if any, otherwise current filtered view
+        from memoria.ui.grid_view import ROLE_FILE_ID
+        selected_ids = {
+            self._grid_model.index(r).data(ROLE_FILE_ID)
+            for r in range(self._grid_model.rowCount())
+            if self._grid_view.selectionModel().isRowSelected(r)
+        }
+        if selected_ids:
+            records = [r for r in self._all_records if r["id"] in selected_ids]
+        else:
+            file_ids = {
+                self._grid_model.index(r).data(ROLE_FILE_ID)
+                for r in range(self._grid_model.rowCount())
+            }
+            records = [r for r in self._all_records if r["id"] in file_ids]
+        if not records:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "No photos",
+                                    "No photos are currently displayed to generate metadata for.")
+            return
+        dlg = GenerateMetadataDialog(records, self._session, parent=self)
+        dlg.metadata_applied.connect(self._load_records)
+        dlg.metadata_applied.connect(
+            lambda: self._log_panel.refresh() if self._log_panel.isVisible() else None
+        )
+        dlg.exec()
 
     def _open_reassess(self):
         from memoria.ui.reassess_dialog import ReassessDialog

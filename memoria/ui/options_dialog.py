@@ -612,6 +612,69 @@ class _AIPage(QWidget):
         page, v = _page_layout()
         scroll.setWidget(page)
 
+        v.addWidget(_section_header("Caption Generation"))
+
+        # ── API configuration ──────────────────────────────────────────
+        api_group = _SettingGroup()
+
+        # Provider
+        self._provider_combo = QComboBox()
+        self._provider_combo.setFixedWidth(140)
+        self._provider_combo.addItem("Google Gemini", "gemini")
+        idx = self._provider_combo.findData(settings.get("ai_provider", "gemini"))
+        self._provider_combo.setCurrentIndex(max(0, idx))
+        self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        api_group.add_row(
+            "AI provider",
+            "Vision AI service used to generate titles and subjects.",
+            self._provider_combo,
+        )
+
+        # Model
+        self._caption_model_combo = QComboBox()
+        self._caption_model_combo.setFixedWidth(200)
+        self._refresh_caption_models(settings.get("ai_caption_model", "gemini-1.5-flash"))
+        api_group.add_row(
+            "Caption model",
+            "Model used for photo analysis. Faster models cost less; "
+            "Pro models produce richer descriptions.",
+            self._caption_model_combo,
+        )
+
+        # API key
+        key_widget = QWidget()
+        key_widget.setStyleSheet("background:transparent;")
+        key_row = QHBoxLayout(key_widget)
+        key_row.setContentsMargins(0, 0, 0, 0)
+        key_row.setSpacing(6)
+        self._api_key_input = QLineEdit(settings.get("ai_api_key", ""))
+        self._api_key_input.setFixedWidth(260)
+        self._api_key_input.setPlaceholderText("Paste API key here…")
+        self._api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        key_row.addWidget(self._api_key_input)
+        self._show_key_btn = QPushButton("Show")
+        self._show_key_btn.setFixedSize(52, 26)
+        self._show_key_btn.setCheckable(True)
+        self._show_key_btn.setStyleSheet(
+            "QPushButton { background:#3a3a3a; color:#aaa; border:1px solid #555; "
+            "border-radius:4px; font-size:11px; }"
+            "QPushButton:checked { color:#fff; }"
+        )
+        self._show_key_btn.clicked.connect(
+            lambda checked: self._api_key_input.setEchoMode(
+                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+            )
+        )
+        key_row.addWidget(self._show_key_btn)
+        api_group.add_row(
+            "API key",
+            "Key is stored locally in ui_settings.json and never sent anywhere "
+            "except the selected provider.",
+            key_widget,
+        )
+
+        v.addWidget(api_group)
+
         v.addWidget(_section_header("AI & Face Detection"))
 
         # ── Detection settings ─────────────────────────────────────────
@@ -708,6 +771,22 @@ class _AIPage(QWidget):
 
         v.addStretch()
 
+    def _on_provider_changed(self, _):
+        cur_model = self._caption_model_combo.currentData()
+        self._refresh_caption_models(cur_model)
+
+    def _refresh_caption_models(self, current: str = ""):
+        from memoria.ai.caption import GEMINI_MODELS
+        provider = self._provider_combo.currentData() if hasattr(self, "_provider_combo") else "gemini"
+        models = GEMINI_MODELS if provider == "gemini" else []
+        self._caption_model_combo.blockSignals(True)
+        self._caption_model_combo.clear()
+        for m in models:
+            self._caption_model_combo.addItem(m, m)
+        idx = self._caption_model_combo.findData(current)
+        self._caption_model_combo.setCurrentIndex(max(0, idx))
+        self._caption_model_combo.blockSignals(False)
+
     def _float_slider_widget(self, slider: QSlider) -> QWidget:
         """Slider with value label above, formatted as 0.00."""
         w = QWidget()
@@ -733,6 +812,9 @@ class _AIPage(QWidget):
         self._min_size_combo.setCurrentIndex(int(self._DEFAULTS["min_cluster_size"]) - 1)
 
     def apply(self, settings: dict):
+        settings["ai_provider"]       = self._provider_combo.currentData()
+        settings["ai_api_key"]        = self._api_key_input.text().strip()
+        settings["ai_caption_model"]  = self._caption_model_combo.currentData() or "gemini-1.5-flash"
         settings["face_model"]        = self._model_combo.currentText()
         settings["detector_backend"]  = self._detector_combo.currentText()
         settings["match_threshold"]   = round(self._match_slider.value() / 100, 2)
