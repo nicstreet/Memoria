@@ -59,6 +59,10 @@ def write_tags_to_file(filepath: str, tags: list[str]) -> bool:
         log.warning("exiftool not found — tags will not be written to files")
         return False
 
+    # Strip internal-only tags that should never appear in file metadata
+    _INTERNAL_TAGS = {"unknown"}
+    tags = [t for t in tags if t.lower() not in _INTERNAL_TAGS]
+
     # Build the argument list.
     # Clearing first (-Keywords= -Subject=) then setting ensures a clean replace
     # rather than appending to whatever was already in the file.
