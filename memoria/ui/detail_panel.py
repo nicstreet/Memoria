@@ -6,8 +6,8 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap, QImageReader
 from PyQt6.QtWidgets import (
-    QCompleter, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton,
-    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QComboBox, QCompleter, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu,
+    QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from memoria.ui.thumbnail_cache import ThumbnailCache
@@ -368,10 +368,13 @@ class DetailPanel(QWidget):
             if meta.get("duration_seconds"):
                 secs = int(meta["duration_seconds"])
                 self._add_meta("Duration", f"{secs // 60}m {secs % 60}s")
-            if meta.get("location_label"):
-                self._add_location(meta["location_label"], meta.get("gps_lat"), meta.get("gps_lon"))
-            elif meta.get("gps_lat"):
-                self._add_location(None, meta["gps_lat"], meta["gps_lon"])
+            if record.get("file_type") == "photo":
+                # Always show location field for photos (editable even if blank)
+                self._add_location(
+                    meta.get("location_label"),
+                    meta.get("gps_lat"),
+                    meta.get("gps_lon"),
+                )
 
         # People
         if self._session:
@@ -450,11 +453,74 @@ class DetailPanel(QWidget):
         hdr.setStyleSheet("color:#555; font-size:10px; font-weight:bold;")
         v.addWidget(hdr)
 
-        # Location text + optional map icon on the same row
-        display = label or (f"{lat:.4f}, {lon:.4f}" if lat is not None else "Unknown")
-        loc_lbl = QLabel(display)
-        loc_lbl.setWordWrap(True)
-        loc_lbl.setStyleSheet("color:#d4d4d4; font-size:12px;")
+        # Editable combo populated from previously used locations
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        combo.lineEdit().setPlaceholderText("Enter location…")
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background:#3a3a3a; border:1px solid #555;
+                border-radius:4px; color:#d4d4d4; padding:2px 6px; font-size:12px;
+            }}
+            QComboBox:focus {{ border-color:#7c6af7; }}
+            QComboBox::drop-down {{
+                subcontrol-origin:padding; subcontrol-position:top right;
+                width:20px; border-left:1px solid #555;
+            }}
+            QComboBox QAbstractItemView {{
+                background:#2d2d2d; color:#d4d4d4;
+                selection-background-color:#5a4fd4; border:1px solid #555;
+            }}
+        """)
+
+        # Populate with existing locations from DB
+        existing_locations: list[str] = []
+        if self._session:
+            try:
+                from memoria.database.models import Metadata as _Meta
+                rows = (
+                    self._session.query(_Meta.location_label)
+                    .filter(_Meta.location_label.isnot(None),
+                            _Meta.location_label != "")
+                    .distinct()
+                    .order_by(_Meta.location_label)
+                    .all()
+                )
+                existing_locations = [r.location_label for r in rows]
+            except Exception:
+                pass
+
+        combo.addItem("")   # blank = clear
+        for loc in existing_locations:
+            combo.addItem(loc)
+
+        current = label or (f"{lat:.4f}, {lon:.4f}" if lat is not None else "")
+        combo.setCurrentText(current)
+
+        # Save on editing finished
+        def _on_location_committed():
+            new_label = combo.currentText().strip()
+            if not self._current_record or not self._session:
+                return
+            try:
+                from memoria.database.models import Metadata as _Meta2
+                m = self._session.query(_Meta2).filter_by(
+                    file_id=self._current_record["id"]
+                ).first()
+                if m is None:
+                    m = _Meta2(file_id=self._current_record["id"])
+                    self._session.add(m)
+                m.location_label = new_label or None
+                self._session.commit()
+                if self._current_meta is not None:
+                    self._current_meta["location_label"] = new_label or None
+            except Exception as e:
+                self._session.rollback()
+                log.warning(f"Could not save location: {e}")
+
+        combo.lineEdit().editingFinished.connect(_on_location_committed)
+        combo.currentIndexChanged.connect(lambda _: _on_location_committed())
 
         if lat is not None and lon is not None:
             from memoria.ui.fluent_icons import fi, FONT_NAME
@@ -475,11 +541,11 @@ class DetailPanel(QWidget):
             loc_row = QHBoxLayout()
             loc_row.setContentsMargins(0, 0, 0, 0)
             loc_row.setSpacing(4)
-            loc_row.addWidget(loc_lbl, stretch=1)
+            loc_row.addWidget(combo, stretch=1)
             loc_row.addWidget(map_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
             v.addLayout(loc_row)
         else:
-            v.addWidget(loc_lbl)
+            v.addWidget(combo)
 
         self._meta_layout.insertWidget(self._meta_layout.count() - 1, row)
 

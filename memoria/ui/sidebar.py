@@ -135,6 +135,7 @@ class SidebarFilters(QWidget):
         self._build_tags()
         self._build_duplicates()
         self._build_unidentified()
+        self._build_ai_metadata()
         self._layout.addStretch()
 
         scroll.setWidget(content)
@@ -312,6 +313,20 @@ class SidebarFilters(QWidget):
         sec.body().addWidget(self._dupes_check)
         self._layout.addWidget(sec)
 
+    def _build_ai_metadata(self):
+        from memoria.ui.fluent_icons import fi
+        sec = _Section("AI Generated", icon=fi.SCAN)
+        self._ai_title_check = _WrappingCheck("Has AI Title")
+        self._ai_title_check.setToolTip("Show only photos where an AI-generated title has been applied")
+        self._ai_title_check.stateChanged.connect(self._emit)
+        sec.body().addWidget(self._ai_title_check)
+
+        self._ai_subject_check = _WrappingCheck("Has AI Subject")
+        self._ai_subject_check.setToolTip("Show only photos where an AI-generated subject has been applied")
+        self._ai_subject_check.stateChanged.connect(self._emit)
+        sec.body().addWidget(self._ai_subject_check)
+        self._layout.addWidget(sec)
+
     def _build_unidentified(self):
         from memoria.ui.fluent_icons import fi
         sec = _Section("Faces", icon=fi.FACE)
@@ -385,6 +400,8 @@ class SidebarFilters(QWidget):
             "tags":            tag_ids,
             "duplicates_only":    self._dupes_check.isChecked(),
             "unidentified_faces": self._unidentified_check.isChecked(),
+            "ai_title":           self._ai_title_check.isChecked(),
+            "ai_subject":         self._ai_subject_check.isChecked(),
         }
 
     def clear_all(self):
@@ -396,6 +413,8 @@ class SidebarFilters(QWidget):
         self._tags_list.clearSelection()
         self._dupes_check.setChecked(False)
         self._unidentified_check.setChecked(False)
+        self._ai_title_check.setChecked(False)
+        self._ai_subject_check.setChecked(False)
         self._emit()
 
     # ── Internal helpers ─────────────────────────────────────────────────────
@@ -421,6 +440,8 @@ class SidebarFilters(QWidget):
             or bool(filters["tags"])
             or filters["duplicates_only"]
             or filters["unidentified_faces"]
+            or filters["ai_title"]
+            or filters["ai_subject"]
         )
         self._clear_btn.setEnabled(is_active)
         self.filters_changed.emit(filters)

@@ -693,6 +693,36 @@ class MainWindow(QMainWindow):
             finally:
                 session.close()
 
+        ai_title_ids: set[int] | None = None
+        if filters.get("ai_title"):
+            session = get_session()
+            try:
+                rows = (
+                    session.query(EditLog.file_id)
+                    .filter(EditLog.source == "ai",
+                            EditLog.action_type == "title",
+                            EditLog.file_id.isnot(None))
+                    .distinct().all()
+                )
+                ai_title_ids = {r.file_id for r in rows}
+            finally:
+                session.close()
+
+        ai_subject_ids: set[int] | None = None
+        if filters.get("ai_subject"):
+            session = get_session()
+            try:
+                rows = (
+                    session.query(EditLog.file_id)
+                    .filter(EditLog.source == "ai",
+                            EditLog.action_type == "subject",
+                            EditLog.file_id.isnot(None))
+                    .distinct().all()
+                )
+                ai_subject_ids = {r.file_id for r in rows}
+            finally:
+                session.close()
+
         tag_ids: set[int] | None = None
         if filters["tags"]:
             session = get_session()
@@ -728,6 +758,10 @@ class MainWindow(QMainWindow):
             if unidentified_ids is not None and r["id"] not in unidentified_ids:
                 continue
             if dupe_ids is not None and r["id"] not in dupe_ids:
+                continue
+            if ai_title_ids is not None and r["id"] not in ai_title_ids:
+                continue
+            if ai_subject_ids is not None and r["id"] not in ai_subject_ids:
                 continue
             filtered.append(r)
 
