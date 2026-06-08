@@ -54,13 +54,14 @@ class _GenerateWorker(QObject):
     finished     = pyqtSignal()
 
     def __init__(self, rows: list[dict], api_key: str,
-                 provider: str, model: str):
+                 provider: str, model: str, batch_context: str = ""):
         super().__init__()
-        self._rows     = rows
-        self._api_key  = api_key
-        self._provider = provider
-        self._model    = model
-        self._cancel   = False
+        self._rows          = rows
+        self._api_key       = api_key
+        self._provider      = provider
+        self._model         = model
+        self._batch_context = batch_context
+        self._cancel        = False
 
     def cancel(self):
         self._cancel = True
@@ -83,6 +84,7 @@ class _GenerateWorker(QObject):
                     self._api_key,
                     self._provider,
                     self._model,
+                    batch_context=self._batch_context,
                 )
                 self.row_done.emit(row_idx, result["title"], result["subject"])
             except RuntimeError as exc:
@@ -103,6 +105,7 @@ class _GenerateWorker(QObject):
                                 self._api_key,
                                 self._provider,
                                 self._model,
+                                batch_context=self._batch_context,
                             )
                             self.row_done.emit(row_idx, result["title"], result["subject"])
                             continue
@@ -160,6 +163,7 @@ class GenerateMetadataDialog(QDialog):
         self._populate_table()
         self._table.itemChanged.connect(self._on_item_changed)
         self._refresh_info_label()
+        self._auto_detect_batch_context()
 
         if not self._api_key:
             self._show_no_key_banner()
@@ -186,6 +190,36 @@ class GenerateMetadataDialog(QDialog):
         info_row.addWidget(self._no_key_lbl)
 
         root.addLayout(info_row)
+
+        # ── Batch context row ──────────────────────────────────────────
+        ctx_row = QHBoxLayout()
+        ctx_row.setSpacing(6)
+        ctx_lbl = QLabel("Event context:")
+        ctx_lbl.setStyleSheet("color:#888; font-size:12px;")
+        ctx_lbl.setFixedWidth(96)
+        ctx_row.addWidget(ctx_lbl)
+
+        self._batch_ctx_input = QLineEdit()
+        self._batch_ctx_input.setPlaceholderText(
+            "e.g. Paris Trip 2024  (auto-detected from photo metadata, edit if needed)"
+        )
+        self._batch_ctx_input.setStyleSheet("""
+            QLineEdit {
+                background:#2a2a2a; border:1px solid #444;
+                border-radius:4px; color:#d4d4d4; padding:3px 8px; font-size:12px;
+            }
+            QLineEdit:focus { border-color:#7c6af7; }
+        """)
+        ctx_row.addWidget(self._batch_ctx_input, stretch=1)
+
+        ctx_hint = QLabel("ⓘ")
+        ctx_hint.setStyleSheet("color:#555; font-size:13px;")
+        ctx_hint.setToolTip(
+            "This shared context is sent with every photo so the AI produces\n"
+            "consistent titles. Leave blank to caption each photo independently."
+        )
+        ctx_row.addWidget(ctx_hint)
+        root.addLayout(ctx_row)
 
         # ── Table ─────────────────────────────────────────────────────
         self._table = QTableWidget()
@@ -314,6 +348,65 @@ class GenerateMetadataDialog(QDialog):
             f"<b>{n_sel}</b> of <b>{n_total}</b> photo{'s' if n_total != 1 else ''} selected "
             f"&nbsp;·&nbsp; Model: <b>{self._model}</b>"
         )
+
+    def _auto_detect_batch_context(self):
+        """
+        Analyse the selected records' metadata and suggest a batch event context.
+
+        Strategy:
+        - Find the most common location_label (if ≥40% of records share it, use it)
+        - Find the date range (min/max date_taken across all records)
+        - Combine into a human-readable string like "Paris, France · Mar 2024"
+        - Detect sub-groups separated by >12h gaps and note if there are multiple
+        """
+        from collections import Counter
+        from datetime import datetime, timedelta
+
+        payloads = self._build_row_payloads(list(range(len(self._records))))
+
+        locations: list[str] = []
+        dates: list[datetime] = []
+
+        for p in payloads:
+            m = p.get("metadata", {})
+            if m.get("location_label"):
+                locations.append(m["location_label"])
+            if m.get("date_taken") and isinstance(m["date_taken"], datetime):
+                dates.append(m["date_taken"])
+
+        parts: list[str] = []
+
+        # Dominant location
+        if locations:
+            most_common, count = Counter(locations).most_common(1)[0]
+            if count / len(self._records) >= 0.4:
+                parts.append(most_common)
+
+        # Date range
+        if dates:
+            dates.sort()
+            lo, hi = dates[0], dates[-1]
+            if lo.date() == hi.date():
+                parts.append(lo.strftime("%d %b %Y"))
+            elif lo.year == hi.year and lo.month == hi.month:
+                parts.append(f"{lo.strftime('%d')}–{hi.strftime('%d %b %Y')}")
+            elif lo.year == hi.year:
+                parts.append(f"{lo.strftime('%b')}–{hi.strftime('%b %Y')}")
+            else:
+                parts.append(f"{lo.strftime('%b %Y')}–{hi.strftime('%b %Y')}")
+
+            # Warn if there are multiple distinct day-clusters (possible mixed events)
+            day_gaps = [
+                (dates[i+1] - dates[i]).total_seconds() / 3600
+                for i in range(len(dates)-1)
+            ]
+            big_gaps = sum(1 for g in day_gaps if g > 12)
+            if big_gaps >= 2:
+                parts.append(f"({big_gaps + 1} separate days detected)")
+
+        suggestion = " · ".join(parts)
+        if suggestion:
+            self._batch_ctx_input.setText(suggestion)
 
     def _show_no_key_banner(self):
         self._no_key_lbl.show()
@@ -474,8 +567,10 @@ class GenerateMetadataDialog(QDialog):
         self._done_count = 0
         self._total = len(payloads)
 
+        batch_context = self._batch_ctx_input.text().strip()
         self._worker = _GenerateWorker(
-            payloads, self._api_key, self._provider, self._model
+            payloads, self._api_key, self._provider, self._model,
+            batch_context=batch_context,
         )
         self._thread = QThread()
         self._worker.moveToThread(self._thread)

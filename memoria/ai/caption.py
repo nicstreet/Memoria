@@ -31,10 +31,13 @@ GEMINI_MODELS = [
 _PROMPT = """\
 Analyse this photo and return a JSON object with exactly two fields:
 - "title": a concise, natural-language title (5–12 words; do not start with \
-"A photo of" or "An image of")
+"A photo of" or "An image of"). The title should reflect both what is \
+specifically visible in this photo AND the broader event or trip context \
+if one is provided below.
 - "subject": a single subject category — one to three words that best describes \
 the photo's main theme (e.g. "Holiday", "Family Portrait", "Landscape", \
-"Street Photography", "Wildlife", "Architecture", "Sport", "Event")
+"Street Photography", "Wildlife", "Architecture", "Sport", "Event"). \
+Keep the subject consistent with other photos from the same event.
 
 {context}
 
@@ -58,9 +61,13 @@ def _resize_to_bytes(filepath: str, max_px: int = 1024) -> bytes:
         return buf.getvalue()
 
 
-def _build_context(metadata: dict) -> str:
+def _build_context(metadata: dict, batch_context: str = "") -> str:
     """Format available metadata into a bullet-point context block."""
     parts = []
+
+    # Batch / event context goes first so the model weights it highly
+    if batch_context:
+        parts.append(f"Event / batch context: {batch_context}")
 
     if metadata.get("location_label"):
         parts.append(f"Location: {metadata['location_label']}")
@@ -111,7 +118,8 @@ def generate_gemini(
     filepath: str,
     metadata: dict,
     api_key: str,
-    model: str = "gemini-1.5-flash",
+    model: str = "gemini-2.0-flash-lite-001",
+    batch_context: str = "",
 ) -> dict:
     """
     Call the Gemini vision API for one photo.
@@ -123,7 +131,7 @@ def generate_gemini(
         raise ValueError(f"Unsupported image format: {ext}")
 
     img_b64 = base64.b64encode(_resize_to_bytes(filepath)).decode()
-    context = _build_context(metadata)
+    context = _build_context(metadata, batch_context=batch_context)
     prompt  = _PROMPT.format(context=context)
 
     payload = json.dumps({
@@ -167,7 +175,8 @@ def generate_caption(
     metadata: dict,
     api_key: str,
     provider: str = "gemini",
-    model: str = "gemini-1.5-flash",
+    model: str = "gemini-2.0-flash-lite-001",
+    batch_context: str = "",
 ) -> dict:
     """
     Generate title and subject for a photo using an AI vision API.
@@ -186,5 +195,6 @@ def generate_caption(
     {"title": str, "subject": str}
     """
     if provider == "gemini":
-        return generate_gemini(filepath, metadata, api_key, model)
+        return generate_gemini(filepath, metadata, api_key, model,
+                               batch_context=batch_context)
     raise NotImplementedError(f"Provider '{provider}' is not yet supported")
