@@ -1299,6 +1299,26 @@ class MainWindow(QMainWindow):
             self._start_bg_reassess()
 
     def closeEvent(self, event):
+        # Check for unsaved pending edits before closing
+        if self._has_pending_edits():
+            from PyQt6.QtWidgets import QMessageBox
+            n = self._pending_edit_count()
+            reply = QMessageBox.question(
+                self,
+                "Unsaved changes",
+                f"You have {n} pending change{'s' if n != 1 else ''} that "
+                f"{'have' if n != 1 else 'has'} not been written to the files yet.\n\n"
+                "These changes are saved in the Memoria database and will still be "
+                "available next time you open the app — open the Activity Log to "
+                "write them to the files when you're ready.\n\n"
+                "Exit anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+
         save_settings({"columns": self._columns})
         try:
             if self._bg_thread is not None and not self._bg_thread.isFinished():
@@ -1309,3 +1329,34 @@ class MainWindow(QMainWindow):
             pass  # thread already deleted — nothing to wait for
         self._session.close()
         super().closeEvent(event)
+
+    def _has_pending_edits(self) -> bool:
+        """Return True if there are unsaved user edits in the edit_log table."""
+        try:
+            session = get_session()
+            try:
+                return session.query(EditLog).filter(
+                    EditLog.saved == False,   # noqa: E712
+                    EditLog.source == "user",
+                ).first() is not None
+            finally:
+                session.close()
+        except Exception:
+            return False
+
+    def _pending_edit_count(self) -> int:
+        """Count of distinct files with unsaved user edits."""
+        try:
+            session = get_session()
+            try:
+                from sqlalchemy import func
+                return session.query(
+                    func.count(EditLog.id.distinct())
+                ).filter(
+                    EditLog.saved == False,   # noqa: E712
+                    EditLog.source == "user",
+                ).scalar() or 0
+            finally:
+                session.close()
+        except Exception:
+            return 0

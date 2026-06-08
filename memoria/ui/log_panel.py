@@ -86,13 +86,8 @@ class LogPanel(QWidget):
 
         self._write_btn = QPushButton("Write pending to files")
         self._write_btn.setFixedHeight(22)
-        self._write_btn.setStyleSheet(
-            "QPushButton { background:#3a3a3a; color:#d4d4d4; border:1px solid #555; "
-            "border-radius:3px; font-size:11px; padding:0 8px; }"
-            "QPushButton:hover { background:#4a4a4a; }"
-        )
         self._write_btn.clicked.connect(self._write_pending)
-        self._write_btn.hide()
+        self._update_write_btn(has_pending=False)   # start grey; refreshed with data
         hrow.addWidget(self._write_btn)
 
         _hdr_lbl = QLabel("Activity Log")
@@ -146,6 +141,14 @@ class LogPanel(QWidget):
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    def has_pending(self) -> bool:
+        """Return True if there are unsaved user edits waiting to be written."""
+        return any(not r["saved"] and r["source"] == "user" for r in self._rows_data)
+
+    def pending_count(self) -> int:
+        """Number of unsaved user edit entries."""
+        return sum(1 for r in self._rows_data if not r["saved"] and r["source"] == "user")
+
     def refresh(self):
         """Reload all entries from the edit_log DB table and repopulate."""
         self._rows_data = self._load_from_db()
@@ -187,6 +190,25 @@ class LogPanel(QWidget):
             log.warning(f"LogPanel DB load failed: {e}")
             return []
 
+    def _update_write_btn(self, has_pending: bool):
+        """Style the write button: accent colour when pending, grey otherwise."""
+        from memoria.ui.theme import accent
+        a = accent()
+        if has_pending:
+            self._write_btn.setEnabled(True)
+            self._write_btn.setStyleSheet(
+                f"QPushButton {{ background:{a}; color:#fff; border:1px solid {a}; "
+                f"border-radius:3px; font-size:11px; padding:0 8px; font-weight:600; }}"
+                f"QPushButton:hover {{ background:{a}dd; }}"
+                f"QPushButton:pressed {{ background:{a}99; }}"
+            )
+        else:
+            self._write_btn.setEnabled(False)
+            self._write_btn.setStyleSheet(
+                "QPushButton { background:#2a2a2a; color:#555; border:1px solid #3a3a3a; "
+                "border-radius:3px; font-size:11px; padding:0 8px; }"
+            )
+
     def _set_filter(self, mode: str):
         self._filter_mode = mode
         for btn, m in (
@@ -206,7 +228,7 @@ class LogPanel(QWidget):
             rows = [r for r in rows if r["source"] == "ai"]
 
         has_pending = any(not r["saved"] and r["source"] == "user" for r in self._rows_data)
-        self._write_btn.setVisible(has_pending)
+        self._update_write_btn(has_pending)
 
         self._table.setRowCount(0)
         for row_data in rows:
