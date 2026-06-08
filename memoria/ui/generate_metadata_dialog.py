@@ -154,7 +154,7 @@ class GenerateMetadataDialog(QDialog):
         self._session   = session
         self._api_key   = get_app_setting("ai_api_key", "")
         self._provider  = self._settings.get("ai_provider", "gemini")
-        self._model     = self._settings.get("ai_caption_model", "gemini-1.5-flash")
+        self._model     = get_app_setting("ai_caption_model", "gemini-2.0-flash-lite")
 
         self._records   = [r for r in records if r.get("file_type") == "photo"]
         self._thread: QThread | None = None

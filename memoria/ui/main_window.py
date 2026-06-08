@@ -1225,7 +1225,9 @@ class MainWindow(QMainWindow):
             for r in range(self._grid_model.rowCount())
             if self._grid_view.selectionModel().isRowSelected(r)
         }
-        if selected_ids:
+        # Only treat as intentional selection if >1 photo chosen;
+        # a single selected item is usually just the focused/current photo.
+        if len(selected_ids) > 1:
             records = [r for r in self._all_records if r["id"] in selected_ids]
         else:
             file_ids = {

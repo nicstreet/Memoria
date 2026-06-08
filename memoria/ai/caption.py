@@ -21,11 +21,11 @@ log = logging.getLogger(__name__)
 _SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 GEMINI_MODELS = [
-    "gemini-2.0-flash-lite-001",  # fastest / cheapest (stable)
-    "gemini-2.0-flash",           # good balance
-    "gemini-2.5-flash-lite",      # efficient, latest gen
-    "gemini-2.5-flash",           # best quality for photo analysis
-    "gemini-2.5-pro",             # highest quality
+    "gemini-2.0-flash-lite",   # fastest / cheapest
+    "gemini-2.0-flash",        # good balance
+    "gemini-2.5-flash-lite",   # efficient, latest gen
+    "gemini-2.5-flash",        # best quality for photo analysis
+    "gemini-2.5-pro",          # highest quality
 ]
 
 _PROMPT = """\
@@ -143,7 +143,7 @@ def _parse_json_response(text: str) -> dict:
 def detect_batch_subject(
     filepaths: list[str],
     api_key: str,
-    model: str = "gemini-2.0-flash-lite-001",
+    model: str = "gemini-2.0-flash-lite",
     batch_context: str = "",
     subject_list: list[str] | None = None,
 ) -> str:
@@ -203,7 +203,7 @@ def generate_gemini(
     filepath: str,
     metadata: dict,
     api_key: str,
-    model: str = "gemini-2.0-flash-lite-001",
+    model: str = "gemini-2.0-flash-lite",
     batch_context: str = "",
     locked_subject: str = "",
 ) -> dict:
@@ -266,7 +266,7 @@ def generate_caption(
     metadata: dict,
     api_key: str,
     provider: str = "gemini",
-    model: str = "gemini-2.0-flash-lite-001",
+    model: str = "gemini-2.0-flash-lite",
     batch_context: str = "",
     locked_subject: str = "",
 ) -> dict:

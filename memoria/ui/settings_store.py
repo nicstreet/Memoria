@@ -22,9 +22,8 @@ _DEFAULTS = {
     "show_extensions":  True,
     # Editor behaviour
     "auto_write_exif":    False,
-    # AI caption generation (api_key stored in DB, not here)
+    # AI caption generation (api_key + model stored in DB, not here)
     "ai_provider":        "gemini",
-    "ai_caption_model":   "gemini-2.0-flash-lite-001",
     # AI / face detection
     "face_model":         "ArcFace",
     "detector_backend":   "retinaface",
