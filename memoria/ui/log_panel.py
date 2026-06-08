@@ -34,7 +34,8 @@ class LogPanel(QWidget):
                           parent (MainWindow) performs the actual write
     """
     closed = pyqtSignal()
-    exif_write_requested = pyqtSignal(str, str, str)   # filepath, title, subject
+    exif_write_requested  = pyqtSignal(str, str, str)   # filepath, title, subject
+    tags_write_requested  = pyqtSignal(int, str)        # file_id, filepath
 
     _COLS = ("Time", "File", "Action", "Old", "New Value", "Source", "Confirm")
 
@@ -317,16 +318,27 @@ class LogPanel(QWidget):
                 for entry in pending:
                     if entry.file_id and entry.filepath:
                         by_file[entry.file_id]["filepath"] = entry.filepath
-                        by_file[entry.file_id][entry.action_type] = entry.new_value
+                        # title/subject: keep latest value; tag_add/remove: just mark present
+                        if entry.action_type in ("title", "subject"):
+                            by_file[entry.file_id][entry.action_type] = entry.new_value
+                        else:
+                            by_file[entry.file_id][entry.action_type] = True
                         entry_ids.append(entry.id)
 
                 for file_id, fields in by_file.items():
                     filepath = fields["filepath"]
                     # Use DB for any field not in the pending set
                     meta = session.query(Metadata).filter_by(file_id=file_id).first()
-                    title   = fields.get("title",   (meta.title   if meta else "") or "")
-                    subject = fields.get("subject", (meta.subject if meta else "") or "")
-                    self.exif_write_requested.emit(filepath, title, subject)
+
+                    # Write title/subject if changed
+                    if "title" in fields or "subject" in fields:
+                        title   = fields.get("title",   (meta.title   if meta else "") or "")
+                        subject = fields.get("subject", (meta.subject if meta else "") or "")
+                        self.exif_write_requested.emit(filepath, title, subject)
+
+                    # Write tags if any tag_add/tag_remove pending for this file
+                    if "tag_add" in fields or "tag_remove" in fields:
+                        self.tags_write_requested.emit(file_id, filepath)
 
                 # Mark written
                 for eid in entry_ids:

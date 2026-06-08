@@ -303,6 +303,8 @@ class MainWindow(QMainWindow):
         self._detail = DetailPanel(self._thumbnail_cache)
         self._detail.set_session(self._session)
         self._detail.setMinimumWidth(260)
+        self._detail.tag_added.connect(self._on_tag_added)
+        self._detail.tag_removed.connect(self._on_tag_removed)
 
         # ── Splitter ────────────────────────────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -415,6 +417,7 @@ class MainWindow(QMainWindow):
         self._log_panel.exif_write_requested.connect(
             lambda fp, t, s: self._write_title_subject_exif(fp, t, s)
         )
+        self._log_panel.tags_write_requested.connect(self._write_tags_exif)
         layout.addWidget(self._log_panel)
 
         return container
@@ -885,6 +888,42 @@ class MainWindow(QMainWindow):
             self._session.rollback()
             log.error(f"Could not save {field}: {e}")
 
+    def _on_tag_added(self, file_id: int, label: str):
+        """Called when a tag chip is added in the detail panel."""
+        try:
+            file_row = self._session.query(File).get(file_id)
+            self._log_edit(
+                file_id=file_id,
+                filename=file_row.filename if file_row else "",
+                filepath=file_row.filepath if file_row else "",
+                action_type="tag_add",
+                new_value=label,
+                source="user",
+                saved=load_settings().get("auto_write_exif", False),
+            )
+        except Exception as e:
+            log.warning(f"Could not log tag_add: {e}")
+        if self._log_panel.isVisible():
+            self._log_panel.refresh()
+
+    def _on_tag_removed(self, file_id: int, label: str):
+        """Called when a tag chip is removed in the detail panel."""
+        try:
+            file_row = self._session.query(File).get(file_id)
+            self._log_edit(
+                file_id=file_id,
+                filename=file_row.filename if file_row else "",
+                filepath=file_row.filepath if file_row else "",
+                action_type="tag_remove",
+                old_value=label,
+                source="user",
+                saved=load_settings().get("auto_write_exif", False),
+            )
+        except Exception as e:
+            log.warning(f"Could not log tag_remove: {e}")
+        if self._log_panel.isVisible():
+            self._log_panel.refresh()
+
     def _log_edit(
         self, *,
         file_id: int | None,
@@ -956,6 +995,22 @@ class MainWindow(QMainWindow):
             subprocess.run(args, capture_output=True, timeout=15)
         except Exception as e:
             log.warning(f"exiftool title/subject write failed: {e}")
+
+    def _write_tags_exif(self, file_id: int, filepath: str):
+        """Read current tags from DB and write them to the file's EXIF."""
+        try:
+            from memoria.database.models import FileTag, Tag
+            from memoria.exif_writer import write_tags_to_file
+            rows = (
+                self._session.query(Tag.label)
+                .join(FileTag, FileTag.tag_id == Tag.id)
+                .filter(FileTag.file_id == file_id)
+                .order_by(Tag.label)
+                .all()
+            )
+            write_tags_to_file(filepath, [r.label for r in rows])
+        except Exception as e:
+            log.warning(f"Could not write tags to EXIF for file {file_id}: {e}")
 
     def _on_not_duplicate_requested(self, record: dict):
         file_id = record["id"]

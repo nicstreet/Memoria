@@ -121,8 +121,8 @@ class _TagChip(QWidget):
 # ---------------------------------------------------------------------------
 
 class DetailPanel(QWidget):
-    tag_added = pyqtSignal(int, str)    # file_id, tag_label
-    tag_removed = pyqtSignal(int, int)  # file_id, tag_id
+    tag_added   = pyqtSignal(int, str)   # file_id, tag_label
+    tag_removed = pyqtSignal(int, str)  # file_id, tag_label
 
     def __init__(self, thumbnail_cache: ThumbnailCache, parent=None):
         super().__init__(parent)
@@ -625,23 +625,32 @@ class DetailPanel(QWidget):
         if not self._current_record or not self._session:
             return
         try:
-            from memoria.database.models import FileTag
+            from memoria.database.models import FileTag, Tag
+            # Read label before deletion so we can emit it with the signal
+            tag_row = self._session.query(Tag).get(tag_id)
+            label = tag_row.label if tag_row else str(tag_id)
             self._session.query(FileTag).filter_by(
                 file_id=self._current_record["id"], tag_id=tag_id
             ).delete()
             self._session.commit()
             self._refresh_tags(self._current_record["id"])
             self._refresh_tags_meta()
-            self.tag_removed.emit(self._current_record["id"], tag_id)
+            self.tag_removed.emit(self._current_record["id"], label)
             self._sync_tags_to_file()
         except Exception:
             self._session.rollback()
 
     def _sync_tags_to_file(self):
-        """Write the current tag set for the displayed photo to its EXIF/IPTC metadata."""
+        """Write the current tag set to EXIF — only when auto_write_exif is enabled."""
         if not self._current_record or not self._session:
             return
         if self._current_record.get("file_type") != "photo":
+            return
+        try:
+            from memoria.ui.settings_store import load as _load_settings
+            if not _load_settings().get("auto_write_exif", False):
+                return   # deferred — user writes manually via Activity Log
+        except Exception:
             return
         try:
             from memoria.database.models import FileTag, Tag
