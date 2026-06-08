@@ -20,7 +20,7 @@ from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QHBoxLayout,
-    QHeaderView, QLabel, QMessageBox, QProgressBar, QPushButton,
+    QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
