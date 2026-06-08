@@ -21,9 +21,10 @@ log = logging.getLogger(__name__)
 _SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 GEMINI_MODELS = [
+    "gemini-2.0-flash-lite",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro-latest",
 ]
 
 _PROMPT = """\
@@ -132,8 +133,10 @@ def generate_gemini(
         "generationConfig": {"temperature": 0.3, "maxOutputTokens": 256},
     }).encode()
 
+    # v1beta required for preview models (2.0-flash); v1 for stable 1.5 models
+    api_ver = "v1beta" if "2.0" in model or "exp" in model else "v1"
     url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"https://generativelanguage.googleapis.com/{api_ver}/models/"
         f"{model}:generateContent?key={api_key}"
     )
     req = urllib.request.Request(
