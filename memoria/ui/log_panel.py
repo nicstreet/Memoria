@@ -161,10 +161,13 @@ class LogPanel(QWidget):
         """Number of unsaved user edit entries."""
         return sum(1 for r in self._rows_data if not r["saved"] and r["source"] == "user")
 
-    def refresh(self):
+    def refresh(self, preserve_scroll: bool = False):
         """Reload all entries from the edit_log DB table and repopulate."""
+        scroll_pos = self._table.verticalScrollBar().value() if preserve_scroll else 0
         self._rows_data = self._load_from_db()
         self._populate_table()
+        if preserve_scroll and scroll_pos:
+            self._table.verticalScrollBar().setValue(scroll_pos)
 
     # ── Internal ──────────────────────────────────────────────────────────
 
@@ -355,7 +358,7 @@ class LogPanel(QWidget):
                 session.close()
         except Exception as e:
             log.warning(f"Could not save AI confirmation for entry {log_id}: {e}")
-        self.refresh()
+        self.refresh(preserve_scroll=True)
 
     def _write_pending(self):
         """
