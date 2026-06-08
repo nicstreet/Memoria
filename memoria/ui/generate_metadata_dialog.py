@@ -158,6 +158,8 @@ class GenerateMetadataDialog(QDialog):
 
         self._build_ui()
         self._populate_table()
+        self._table.itemChanged.connect(self._on_item_changed)
+        self._refresh_info_label()
 
         if not self._api_key:
             self._show_no_key_banner()
@@ -171,12 +173,7 @@ class GenerateMetadataDialog(QDialog):
 
         # ── Info bar ──────────────────────────────────────────────────
         info_row = QHBoxLayout()
-        self._info_lbl = QLabel(
-            f"<b>{len(self._records)}</b> photo{'s' if len(self._records) != 1 else ''} "
-            f"ready to process &nbsp;·&nbsp; "
-            f"Model: <b>{self._model}</b> &nbsp;·&nbsp; "
-            f"Provider: <b>{self._provider.title()}</b>"
-        )
+        self._info_lbl = QLabel()
         self._info_lbl.setStyleSheet("color:#999; font-size:12px;")
         info_row.addWidget(self._info_lbl)
         info_row.addStretch()
@@ -310,6 +307,14 @@ class GenerateMetadataDialog(QDialog):
 
         root.addLayout(btn_row)
 
+    def _refresh_info_label(self):
+        n_sel   = len(self._checked_rows())
+        n_total = len(self._records)
+        self._info_lbl.setText(
+            f"<b>{n_sel}</b> of <b>{n_total}</b> photo{'s' if n_total != 1 else ''} selected "
+            f"&nbsp;·&nbsp; Model: <b>{self._model}</b>"
+        )
+
     def _show_no_key_banner(self):
         self._no_key_lbl.show()
         self._generate_btn.setEnabled(False)
@@ -375,13 +380,23 @@ class GenerateMetadataDialog(QDialog):
 
     # ── Selection helpers ─────────────────────────────────────────────────
 
+    def _on_item_changed(self, item):
+        if item.column() == _COL_CHECK:
+            self._refresh_info_label()
+
     def _select_all(self):
+        self._table.itemChanged.disconnect(self._on_item_changed)
         for r in range(self._table.rowCount()):
             self._table.item(r, _COL_CHECK).setCheckState(Qt.CheckState.Checked)
+        self._table.itemChanged.connect(self._on_item_changed)
+        self._refresh_info_label()
 
     def _select_none(self):
+        self._table.itemChanged.disconnect(self._on_item_changed)
         for r in range(self._table.rowCount()):
             self._table.item(r, _COL_CHECK).setCheckState(Qt.CheckState.Unchecked)
+        self._table.itemChanged.connect(self._on_item_changed)
+        self._refresh_info_label()
 
     def _checked_rows(self) -> list[int]:
         return [
