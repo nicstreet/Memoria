@@ -205,7 +205,7 @@ class SidebarFilters(QWidget):
         date_style = f"""
             QDateEdit {{
                 background: #3a3a3a; border: 1px solid #555;
-                border-radius: 4px; color: #d4d4d4; padding: 2px 4px;
+                border-radius: 4px; color: #d4d4d4; padding: 2px 4px; font-size: 12px;
             }}
             QDateEdit:focus {{ border-color: #7c6af7; }}
             QDateEdit::drop-down {{
@@ -261,7 +261,7 @@ class SidebarFilters(QWidget):
         self._location_combo.setStyleSheet(f"""
             QComboBox {{
                 background: #3a3a3a; border: 1px solid #555;
-                border-radius: 4px; color: #d4d4d4; padding: 4px 8px;
+                border-radius: 4px; color: #d4d4d4; padding: 4px 8px; font-size: 12px;
             }}
             QComboBox::drop-down {{
                 subcontrol-origin: padding;
