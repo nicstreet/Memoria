@@ -21,11 +21,11 @@ log = logging.getLogger(__name__)
 _SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 GEMINI_MODELS = [
-    "gemini-2.0-flash-lite",   # fastest / cheapest
-    "gemini-2.0-flash",        # good balance
-    "gemini-2.5-flash-lite",   # efficient, supports thinking
-    "gemini-2.5-flash",        # best quality for photo analysis
-    "gemini-2.5-pro",          # highest quality
+    "gemini-2.0-flash-lite-001",  # fastest / cheapest (stable)
+    "gemini-2.0-flash",           # good balance
+    "gemini-2.5-flash-lite",      # efficient, latest gen
+    "gemini-2.5-flash",           # best quality for photo analysis
+    "gemini-2.5-pro",             # highest quality
 ]
 
 _PROMPT = """\

@@ -25,7 +25,7 @@ _DEFAULTS = {
     # AI caption generation
     "ai_provider":        "gemini",
     "ai_api_key":         "",
-    "ai_caption_model":   "gemini-2.0-flash-lite",
+    "ai_caption_model":   "gemini-2.0-flash-lite-001",
     # AI / face detection
     "face_model":         "ArcFace",
     "detector_backend":   "retinaface",
