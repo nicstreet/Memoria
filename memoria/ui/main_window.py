@@ -765,6 +765,10 @@ class MainWindow(QMainWindow):
                 continue
             filtered.append(r)
 
+        if filters.get("invert") and len(filtered) != len(self._all_records):
+            filtered_ids = {r["id"] for r in filtered}
+            filtered = [r for r in self._all_records if r["id"] not in filtered_ids]
+
         self._grid_model.load_records(filtered)
         total = len(self._all_records)
         shown = len(filtered)

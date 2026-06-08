@@ -141,15 +141,35 @@ class SidebarFilters(QWidget):
         scroll.setWidget(content)
         outer.addWidget(scroll)
 
-        # Clear all button pinned at bottom
+        # NOT + Clear all buttons pinned at bottom
         btn_container = QWidget()
         btn_container.setStyleSheet("background: transparent;")
         btn_layout = QHBoxLayout(btn_container)
         btn_layout.setContentsMargins(12, 6, 12, 12)
+        btn_layout.setSpacing(6)
+
+        self._not_btn = QPushButton("NOT")
+        self._not_btn.setCheckable(True)
+        self._not_btn.setFixedWidth(44)
+        self._not_btn.setToolTip("Invert filter — show photos that do NOT match the current filters")
+        self._not_btn.setStyleSheet("""
+            QPushButton {
+                background:#3a3a3a; border:1px solid #555;
+                border-radius:4px; color:#888;
+                padding:3px 6px; font-size:11px; font-weight:600;
+            }
+            QPushButton:checked {
+                background:#c0392b; border-color:#c0392b; color:#fff;
+            }
+            QPushButton:hover:!checked { background:#4a4a4a; }
+        """)
+        self._not_btn.toggled.connect(self._emit)
+        btn_layout.addWidget(self._not_btn)
+
         self._clear_btn = QPushButton("Clear all filters")
         self._clear_btn.clicked.connect(self.clear_all)
         self._clear_btn.setEnabled(False)
-        btn_layout.addWidget(self._clear_btn)
+        btn_layout.addWidget(self._clear_btn, stretch=1)
         outer.addWidget(btn_container)
 
     # ── Section builders ─────────────────────────────────────────────────────
@@ -402,6 +422,7 @@ class SidebarFilters(QWidget):
             "unidentified_faces": self._unidentified_check.isChecked(),
             "ai_title":           self._ai_title_check.isChecked(),
             "ai_subject":         self._ai_subject_check.isChecked(),
+            "invert":             self._not_btn.isChecked(),
         }
 
     def clear_all(self):
@@ -415,6 +436,7 @@ class SidebarFilters(QWidget):
         self._unidentified_check.setChecked(False)
         self._ai_title_check.setChecked(False)
         self._ai_subject_check.setChecked(False)
+        self._not_btn.setChecked(False)
         self._emit()
 
     # ── Internal helpers ─────────────────────────────────────────────────────
@@ -442,6 +464,7 @@ class SidebarFilters(QWidget):
             or filters["unidentified_faces"]
             or filters["ai_title"]
             or filters["ai_subject"]
+            or filters["invert"]
         )
         self._clear_btn.setEnabled(is_active)
         self.filters_changed.emit(filters)
