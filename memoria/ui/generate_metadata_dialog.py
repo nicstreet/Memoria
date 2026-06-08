@@ -19,7 +19,7 @@ from datetime import datetime
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QDialog, QDialogButtonBox, QHBoxLayout,
+    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -54,14 +54,16 @@ class _GenerateWorker(QObject):
     finished     = pyqtSignal()
 
     def __init__(self, rows: list[dict], api_key: str,
-                 provider: str, model: str, batch_context: str = ""):
+                 provider: str, model: str, batch_context: str = "",
+                 locked_subject: str = ""):
         super().__init__()
-        self._rows          = rows
-        self._api_key       = api_key
-        self._provider      = provider
-        self._model         = model
-        self._batch_context = batch_context
-        self._cancel        = False
+        self._rows           = rows
+        self._api_key        = api_key
+        self._provider       = provider
+        self._model          = model
+        self._batch_context  = batch_context
+        self._locked_subject = locked_subject
+        self._cancel         = False
 
     def cancel(self):
         self._cancel = True
@@ -85,6 +87,7 @@ class _GenerateWorker(QObject):
                     self._provider,
                     self._model,
                     batch_context=self._batch_context,
+                    locked_subject=self._locked_subject,
                 )
                 self.row_done.emit(row_idx, result["title"], result["subject"])
             except RuntimeError as exc:
@@ -106,6 +109,7 @@ class _GenerateWorker(QObject):
                                 self._provider,
                                 self._model,
                                 batch_context=self._batch_context,
+                                locked_subject=self._locked_subject,
                             )
                             self.row_done.emit(row_idx, result["title"], result["subject"])
                             continue
@@ -221,6 +225,64 @@ class GenerateMetadataDialog(QDialog):
         )
         ctx_row.addWidget(ctx_hint)
         root.addLayout(ctx_row)
+
+        # ── Subject row ────────────────────────────────────────────────
+        subj_row = QHBoxLayout()
+        subj_row.setSpacing(6)
+        subj_lbl = QLabel("Subject:")
+        subj_lbl.setStyleSheet("color:#888; font-size:12px;")
+        subj_lbl.setFixedWidth(96)
+        subj_row.addWidget(subj_lbl)
+
+        self._subject_combo = QComboBox()
+        self._subject_combo.setStyleSheet("""
+            QComboBox {
+                background:#2a2a2a; border:1px solid #444;
+                border-radius:4px; color:#d4d4d4; padding:2px 8px; font-size:12px;
+            }
+            QComboBox:focus { border-color:#7c6af7; }
+            QComboBox::drop-down {
+                subcontrol-origin:padding; subcontrol-position:top right;
+                width:20px; border-left:1px solid #444;
+            }
+            QComboBox QAbstractItemView {
+                background:#2d2d2d; color:#d4d4d4;
+                selection-background-color:#5a4fd4; border:1px solid #555;
+            }
+        """)
+        self._subject_combo.addItem("Auto (AI) — decide per photo", "")
+        self._subject_combo.insertSeparator(1)
+        from memoria.ui.default_subjects import SUBJECT_CATEGORIES
+        for category, subjects in SUBJECT_CATEGORIES:
+            for subject in subjects:
+                self._subject_combo.addItem(subject, subject)
+        subj_row.addWidget(self._subject_combo, stretch=1)
+
+        self._detect_subj_btn = QPushButton("Auto-detect")
+        self._detect_subj_btn.setFixedWidth(90)
+        self._detect_subj_btn.setToolTip(
+            "Send a few sample photos to the AI to determine the best subject\n"
+            "for the whole batch (uses one API call)"
+        )
+        self._detect_subj_btn.setStyleSheet(
+            "QPushButton { background:#3a3a3a; color:#aaa; border:1px solid #555; "
+            "border-radius:4px; padding:3px 8px; font-size:11px; }"
+            "QPushButton:hover { background:#4a4a4a; color:#fff; }"
+            "QPushButton:disabled { color:#555; border-color:#333; }"
+        )
+        self._detect_subj_btn.setEnabled(bool(self._api_key))
+        self._detect_subj_btn.clicked.connect(self._run_subject_detection)
+        subj_row.addWidget(self._detect_subj_btn)
+
+        subj_hint = QLabel("ⓘ")
+        subj_hint.setStyleSheet("color:#555; font-size:13px;")
+        subj_hint.setToolTip(
+            "Lock one subject for all photos in the batch.\n"
+            "The AI will only generate titles — keeping subjects consistent.\n"
+            "Use Auto-detect to let the AI suggest one based on sample photos."
+        )
+        subj_row.addWidget(subj_hint)
+        root.addLayout(subj_row)
 
         # ── Table ─────────────────────────────────────────────────────
         self._table = QTableWidget()
@@ -409,6 +471,35 @@ class GenerateMetadataDialog(QDialog):
         if suggestion:
             self._batch_ctx_input.setText(suggestion)
 
+    def _run_subject_detection(self):
+        """One-shot API call to detect the best subject for the batch."""
+        from memoria.ai.caption import detect_batch_subject
+        self._detect_subj_btn.setEnabled(False)
+        self._detect_subj_btn.setText("Detecting…")
+        checked = self._checked_rows()
+        filepaths = [self._records[i]["filepath"] for i in (checked or range(len(self._records)))]
+        batch_context = self._batch_ctx_input.text().strip()
+        try:
+            subject = detect_batch_subject(
+                filepaths,
+                self._api_key,
+                self._model,
+                batch_context=batch_context,
+            )
+            if subject:
+                # Find and select the matching item in the combo
+                idx = self._subject_combo.findData(subject)
+                if idx < 0:
+                    # Not in list — add it temporarily
+                    self._subject_combo.addItem(subject, subject)
+                    idx = self._subject_combo.count() - 1
+                self._subject_combo.setCurrentIndex(idx)
+        except Exception as exc:
+            QMessageBox.warning(self, "Detection failed", str(exc))
+        finally:
+            self._detect_subj_btn.setEnabled(True)
+            self._detect_subj_btn.setText("Auto-detect")
+
     def _show_no_key_banner(self):
         self._no_key_lbl.show()
         self._generate_btn.setEnabled(False)
@@ -568,10 +659,12 @@ class GenerateMetadataDialog(QDialog):
         self._done_count = 0
         self._total = len(payloads)
 
-        batch_context = self._batch_ctx_input.text().strip()
+        batch_context  = self._batch_ctx_input.text().strip()
+        locked_subject = self._subject_combo.currentData() or ""
         self._worker = _GenerateWorker(
             payloads, self._api_key, self._provider, self._model,
             batch_context=batch_context,
+            locked_subject=locked_subject,
         )
         self._thread = QThread()
         self._worker.moveToThread(self._thread)

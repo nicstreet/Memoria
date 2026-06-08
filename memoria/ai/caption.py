@@ -44,6 +44,32 @@ Keep the subject consistent with other photos from the same event.
 Return ONLY a valid JSON object — no markdown fences, no explanation.
 Example: {{"title": "Children building sandcastles at low tide", "subject": "Holiday"}}"""
 
+_PROMPT_LOCKED_SUBJECT = """\
+Analyse this photo and return a JSON object with exactly two fields:
+- "title": a concise, natural-language title (5–12 words; do not start with \
+"A photo of" or "An image of"). The title should reflect both what is \
+specifically visible in this photo AND the broader event or trip context \
+if one is provided below.
+- "subject": use exactly "{locked_subject}" — this has already been decided \
+for the whole batch, do not change it.
+
+{context}
+
+Return ONLY a valid JSON object — no markdown fences, no explanation.
+Example: {{"title": "Eiffel Tower lit up at night during Paris trip", "subject": "{locked_subject}"}}"""
+
+_BATCH_SUBJECT_PROMPT = """\
+I will show you {n} photos from the same event or shoot.
+Your task: pick ONE subject category that best describes the overall collection.
+
+Choose from this list (pick the single best match):
+{subject_list}
+
+Return ONLY a JSON object with a single field:
+{{"subject": "chosen subject"}}
+
+No explanation, no markdown fences."""
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -114,12 +140,72 @@ def _parse_json_response(text: str) -> dict:
 
 # ── Provider: Google Gemini ───────────────────────────────────────────────────
 
+def detect_batch_subject(
+    filepaths: list[str],
+    api_key: str,
+    model: str = "gemini-2.0-flash-lite-001",
+    batch_context: str = "",
+    subject_list: list[str] | None = None,
+) -> str:
+    """
+    Send up to 5 sample images to the AI and ask it to pick one subject
+    category for the whole batch.  Returns the subject string.
+    """
+    if subject_list is None:
+        from memoria.ui.default_subjects import ALL_SUBJECTS
+        subject_list = ALL_SUBJECTS
+
+    samples = filepaths[:5]
+    parts: list[dict] = []
+
+    ctx_line = f"\nBatch context: {batch_context}" if batch_context else ""
+    prompt = _BATCH_SUBJECT_PROMPT.format(
+        n=len(samples),
+        subject_list="\n".join(f"- {s}" for s in subject_list),
+    ) + ctx_line
+
+    parts.append({"text": prompt})
+    for fp in samples:
+        try:
+            ext = Path(fp).suffix.lower()
+            if ext in _SUPPORTED_EXTS:
+                img_b64 = base64.b64encode(_resize_to_bytes(fp)).decode()
+                parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
+        except Exception:
+            pass
+
+    payload = json.dumps({
+        "contents": [{"parts": parts}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 64},
+    }).encode()
+
+    api_ver = "v1beta"
+    url = (
+        f"https://generativelanguage.googleapis.com/{api_ver}/models/"
+        f"{model}:generateContent?key={api_key}"
+    )
+    req = urllib.request.Request(
+        url, data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        result = _parse_json_response(raw)
+        return str(result.get("subject", "")).strip()
+    except Exception as exc:
+        raise RuntimeError(f"Batch subject detection failed: {exc}") from exc
+
+
 def generate_gemini(
     filepath: str,
     metadata: dict,
     api_key: str,
     model: str = "gemini-2.0-flash-lite-001",
     batch_context: str = "",
+    locked_subject: str = "",
 ) -> dict:
     """
     Call the Gemini vision API for one photo.
@@ -132,7 +218,12 @@ def generate_gemini(
 
     img_b64 = base64.b64encode(_resize_to_bytes(filepath)).decode()
     context = _build_context(metadata, batch_context=batch_context)
-    prompt  = _PROMPT.format(context=context)
+    if locked_subject:
+        prompt = _PROMPT_LOCKED_SUBJECT.format(
+            locked_subject=locked_subject, context=context
+        )
+    else:
+        prompt = _PROMPT.format(context=context)
 
     payload = json.dumps({
         "contents": [{"parts": [
@@ -177,6 +268,7 @@ def generate_caption(
     provider: str = "gemini",
     model: str = "gemini-2.0-flash-lite-001",
     batch_context: str = "",
+    locked_subject: str = "",
 ) -> dict:
     """
     Generate title and subject for a photo using an AI vision API.
@@ -196,5 +288,6 @@ def generate_caption(
     """
     if provider == "gemini":
         return generate_gemini(filepath, metadata, api_key, model,
-                               batch_context=batch_context)
+                               batch_context=batch_context,
+                               locked_subject=locked_subject)
     raise NotImplementedError(f"Provider '{provider}' is not yet supported")
