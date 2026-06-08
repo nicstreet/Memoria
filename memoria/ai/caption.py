@@ -133,8 +133,8 @@ def generate_gemini(
         "generationConfig": {"temperature": 0.3, "maxOutputTokens": 256},
     }).encode()
 
-    # v1beta required for preview models (2.0-flash); v1 for stable 1.5 models
-    api_ver = "v1beta" if "2.0" in model or "exp" in model else "v1"
+    # v1beta supports all model aliases including -latest; always use it
+    api_ver = "v1beta"
     url = (
         f"https://generativelanguage.googleapis.com/{api_ver}/models/"
         f"{model}:generateContent?key={api_key}"
