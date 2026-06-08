@@ -145,9 +145,10 @@ class GenerateMetadataDialog(QDialog):
         self.setMinimumSize(700, 440)
 
         from memoria.ui.settings_store import load as _load
+        from memoria.database.db import get_app_setting
         self._settings  = _load()
         self._session   = session
-        self._api_key   = self._settings.get("ai_api_key", "").strip()
+        self._api_key   = get_app_setting("ai_api_key", "")
         self._provider  = self._settings.get("ai_provider", "gemini")
         self._model     = self._settings.get("ai_caption_model", "gemini-1.5-flash")
 

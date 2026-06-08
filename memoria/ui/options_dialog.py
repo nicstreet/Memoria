@@ -647,7 +647,8 @@ class _AIPage(QWidget):
         key_row = QHBoxLayout(key_widget)
         key_row.setContentsMargins(0, 0, 0, 0)
         key_row.setSpacing(6)
-        self._api_key_input = QLineEdit(settings.get("ai_api_key", ""))
+        from memoria.database.db import get_app_setting
+        self._api_key_input = QLineEdit(get_app_setting("ai_api_key", ""))
         self._api_key_input.setFixedWidth(260)
         self._api_key_input.setPlaceholderText("Paste API key here…")
         self._api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -813,8 +814,10 @@ class _AIPage(QWidget):
 
     def apply(self, settings: dict):
         settings["ai_provider"]       = self._provider_combo.currentData()
-        settings["ai_api_key"]        = self._api_key_input.text().strip()
-        settings["ai_caption_model"]  = self._caption_model_combo.currentData() or "gemini-1.5-flash"
+        settings["ai_caption_model"]  = self._caption_model_combo.currentData() or "gemini-2.0-flash-lite-001"
+        # API key stored in DB (never in settings JSON / git)
+        from memoria.database.db import set_app_setting
+        set_app_setting("ai_api_key", self._api_key_input.text().strip())
         settings["face_model"]        = self._model_combo.currentText()
         settings["detector_backend"]  = self._detector_combo.currentText()
         settings["match_threshold"]   = round(self._match_slider.value() / 100, 2)

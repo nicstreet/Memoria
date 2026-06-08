@@ -58,3 +58,35 @@ def get_session_factory() -> sessionmaker:
 def get_session() -> Session:
     """Return a session. Caller is responsible for commit/rollback/close."""
     return get_session_factory()()
+
+
+# ── App settings helpers ───────────────────────────────────────────────────────
+
+def get_app_setting(key: str, default: str = "") -> str:
+    """Read a value from the app_settings table. Returns default if not set."""
+    from memoria.database.models import AppSetting
+    session = get_session()
+    try:
+        row = session.get(AppSetting, key)
+        return row.value if (row and row.value is not None) else default
+    except Exception:
+        return default
+    finally:
+        session.close()
+
+
+def set_app_setting(key: str, value: str) -> None:
+    """Write a value to the app_settings table (upsert)."""
+    from memoria.database.models import AppSetting
+    session = get_session()
+    try:
+        row = session.get(AppSetting, key)
+        if row is None:
+            session.add(AppSetting(key=key, value=value))
+        else:
+            row.value = value
+        session.commit()
+    except Exception:
+        session.rollback()
+    finally:
+        session.close()

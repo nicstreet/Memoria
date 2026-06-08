@@ -189,6 +189,17 @@ class SubjectCategory(Base):
     )
 
 
+class AppSetting(Base):
+    """
+    Key/value store for sensitive or local-only settings (e.g. API keys).
+    Stored in the local SQLite DB which is never committed to version control.
+    """
+    __tablename__ = "app_settings"
+
+    key   = Column(Text, primary_key=True)
+    value = Column(Text, nullable=True)
+
+
 class Subject(Base):
     __tablename__ = "subjects"
 
