@@ -69,22 +69,9 @@ class _GenerateWorker(QObject):
         import time
         from memoria.ai.caption import generate_caption
 
-        _INTER_REQUEST_DELAY = 4.0   # seconds between requests (free tier ≈15 rpm)
-        _RATE_LIMIT_RETRY    = 30.0  # seconds to wait after a 429
+        _RATE_LIMIT_RETRY = 15.0  # seconds to wait after a 429
 
-        first = True
         for row in self._rows:
-            if self._cancel:
-                break
-
-            # Throttle: wait between requests so we don't hit rpm limit
-            if not first:
-                for _ in range(int(_INTER_REQUEST_DELAY * 10)):
-                    if self._cancel:
-                        break
-                    time.sleep(0.1)
-            first = False
-
             if self._cancel:
                 break
 
