@@ -48,9 +48,10 @@ class _GenerateWorker(QObject):
     Processes one photo per step and emits a result/error signal.
     Runs in a QThread so the UI stays responsive.
     """
-    row_done  = pyqtSignal(int, str, str)   # row_idx, title, subject
-    row_error = pyqtSignal(int, str)        # row_idx, error_message
-    finished  = pyqtSignal()
+    row_done     = pyqtSignal(int, str, str)   # row_idx, title, subject
+    row_error    = pyqtSignal(int, str)        # row_idx, error_message
+    rate_limited = pyqtSignal(int)             # seconds remaining
+    finished     = pyqtSignal()
 
     def __init__(self, rows: list[dict], api_key: str,
                  provider: str, model: str):
@@ -65,10 +66,28 @@ class _GenerateWorker(QObject):
         self._cancel = True
 
     def run(self):
+        import time
         from memoria.ai.caption import generate_caption
+
+        _INTER_REQUEST_DELAY = 4.0   # seconds between requests (free tier ≈15 rpm)
+        _RATE_LIMIT_RETRY    = 30.0  # seconds to wait after a 429
+
+        first = True
         for row in self._rows:
             if self._cancel:
                 break
+
+            # Throttle: wait between requests so we don't hit rpm limit
+            if not first:
+                for _ in range(int(_INTER_REQUEST_DELAY * 10)):
+                    if self._cancel:
+                        break
+                    time.sleep(0.1)
+            first = False
+
+            if self._cancel:
+                break
+
             row_idx = row["row_idx"]
             try:
                 result = generate_caption(
@@ -79,6 +98,33 @@ class _GenerateWorker(QObject):
                     self._model,
                 )
                 self.row_done.emit(row_idx, result["title"], result["subject"])
+            except RuntimeError as exc:
+                msg = str(exc)
+                # On rate-limit (429), wait and retry once
+                if "429" in msg:
+                    log.warning(f"Rate limited on row {row_idx}, waiting {_RATE_LIMIT_RETRY}s…")
+                    for i in range(int(_RATE_LIMIT_RETRY)):
+                        if self._cancel:
+                            break
+                        self.rate_limited.emit(int(_RATE_LIMIT_RETRY) - i)
+                        time.sleep(1.0)
+                    if not self._cancel:
+                        try:
+                            result = generate_caption(
+                                row["filepath"],
+                                row["metadata"],
+                                self._api_key,
+                                self._provider,
+                                self._model,
+                            )
+                            self.row_done.emit(row_idx, result["title"], result["subject"])
+                            continue
+                        except Exception as exc2:
+                            msg = str(exc2)[:120]
+                else:
+                    msg = msg[:120]
+                log.warning(f"Caption generation failed for row {row_idx}: {msg}")
+                self.row_error.emit(row_idx, msg)
             except Exception as exc:
                 short = str(exc)[:120]
                 log.warning(f"Caption generation failed for row {row_idx}: {exc}")
@@ -434,6 +480,7 @@ class GenerateMetadataDialog(QDialog):
         self._thread.started.connect(self._worker.run)
         self._worker.row_done.connect(self._on_row_done)
         self._worker.row_error.connect(self._on_row_error)
+        self._worker.rate_limited.connect(self._on_rate_limited)
         self._worker.finished.connect(self._on_generate_finished)
         self._worker.finished.connect(self._thread.quit)
         self._thread.finished.connect(self._on_thread_finished)
@@ -464,6 +511,11 @@ class GenerateMetadataDialog(QDialog):
         self._progress.setValue(self._done_count)
         self._status_lbl.setText(
             f"Processing {self._done_count} of {self._total}…"
+        )
+
+    def _on_rate_limited(self, secs_remaining: int):
+        self._status_lbl.setText(
+            f"⏳ Rate limit reached — retrying in {secs_remaining}s…"
         )
 
     def _on_row_error(self, row_idx: int, message: str):
