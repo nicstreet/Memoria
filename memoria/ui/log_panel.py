@@ -84,6 +84,18 @@ class LogPanel(QWidget):
 
         hrow.addStretch()
 
+        self._confirm_all_btn = QPushButton("Confirm all AI ✓")
+        self._confirm_all_btn.setFixedHeight(22)
+        self._confirm_all_btn.setToolTip("Mark all unconfirmed AI actions as correct")
+        self._confirm_all_btn.clicked.connect(self._confirm_all_ai)
+        self._confirm_all_btn.hide()   # shown only when unconfirmed AI rows exist
+        self._confirm_all_btn.setStyleSheet(
+            "QPushButton { background:#2a4a2a; color:#a6e3a1; border:1px solid #3a6a3a; "
+            "border-radius:3px; font-size:11px; padding:0 8px; }"
+            "QPushButton:hover { background:#3a6a3a; }"
+        )
+        hrow.addWidget(self._confirm_all_btn)
+
         self._write_btn = QPushButton("Write pending to files")
         self._write_btn.setFixedHeight(22)
         self._write_btn.clicked.connect(self._write_pending)
@@ -230,6 +242,12 @@ class LogPanel(QWidget):
         has_pending = any(not r["saved"] and r["source"] == "user" for r in self._rows_data)
         self._update_write_btn(has_pending)
 
+        unconfirmed_ai = any(
+            r["source"] == "ai" and r["ai_confirmed"] is None
+            for r in self._rows_data
+        )
+        self._confirm_all_btn.setVisible(unconfirmed_ai)
+
         self._table.setRowCount(0)
         for row_data in rows:
             row_idx = self._table.rowCount()
@@ -299,6 +317,28 @@ class LogPanel(QWidget):
         row.addWidget(yes_btn)
         row.addWidget(no_btn)
         return w
+
+    def _confirm_all_ai(self):
+        """Mark every unconfirmed AI entry as confirmed correct in one DB call."""
+        try:
+            from memoria.database.db import get_session
+            from memoria.database.models import EditLog
+            session = get_session()
+            try:
+                entries = (
+                    session.query(EditLog)
+                    .filter(EditLog.source == "ai",
+                            EditLog.ai_confirmed.is_(None))
+                    .all()
+                )
+                for entry in entries:
+                    entry.ai_confirmed = True
+                session.commit()
+            finally:
+                session.close()
+        except Exception as e:
+            log.warning(f"Confirm all AI failed: {e}")
+        self.refresh()
 
     def _confirm_ai(self, log_id: int, confirmed: bool):
         """Persist AI feedback and refresh the table."""
