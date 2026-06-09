@@ -169,26 +169,15 @@ class DetailPanel(QWidget):
         # ── Status bar ────────────────────────────────────────────────────────
         self._status_widget = QWidget()
         self._status_widget.setStyleSheet("background: transparent;")
-        status_row = QHBoxLayout(self._status_widget)
-        status_row.setContentsMargins(0, 0, 0, 0)
-        status_row.setSpacing(6)
-
-        self._dot_title   = QLabel()
-        self._dot_subject = QLabel()
-        self._dot_face    = QLabel()
-        self._dot_renamed = QLabel()
+        self._status_row = QHBoxLayout(self._status_widget)
+        self._status_row.setContentsMargins(0, 0, 0, 0)
+        self._status_row.setSpacing(6)
+        # Dots are added dynamically in _refresh_status based on active criteria
+        self._status_dots: dict[str, QLabel] = {}
         self._status_score_lbl = QLabel()
         self._status_score_lbl.setStyleSheet("color:#777; font-size:10px;")
-
-        for dot in (self._dot_title, self._dot_subject,
-                    self._dot_face, self._dot_renamed):
-            dot.setFixedSize(14, 14)
-            dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dot.setStyleSheet("font-size:11px;")
-            status_row.addWidget(dot)
-
-        status_row.addWidget(self._status_score_lbl)
-        status_row.addStretch()
+        self._status_row.addWidget(self._status_score_lbl)
+        self._status_row.addStretch()
         layout.addWidget(self._status_widget)
         self._status_widget.hide()
 
@@ -474,10 +463,11 @@ class DetailPanel(QWidget):
             }}
         """)
 
-        # Populate with existing locations from DB
+        # Populate with existing locations from DB (expire_all ensures fresh data)
         existing_locations: list[str] = []
         if self._session:
             try:
+                self._session.expire_all()
                 from memoria.database.models import Metadata as _Meta
                 rows = (
                     self._session.query(_Meta.location_label)
@@ -813,44 +803,76 @@ class DetailPanel(QWidget):
             log.warning(f"Could not write title/subject to EXIF: {e}")
 
     def _refresh_status(self):
-        """Recompute the 4-dot status row and trigger auto-rename if ready."""
+        """Recompute the status dot row (dynamic, based on active criteria)."""
         if not self._current_record or not self._session:
             return
-        from memoria.file_status import compute_status, maybe_auto_rename
-
-        st = compute_status(self._current_record["id"], self._session)
-
+        from memoria.file_status import (
+            FIELD_LABELS, FIELD_SHORT, compute_status, get_criteria,
+            maybe_auto_rename,
+        )
         from memoria.ui.theme import accent
-        a = accent()
 
-        def _dot(ok: bool, na: bool = False) -> str:
-            return "—" if na else ("●" if ok else "○")
+        criteria = get_criteria()
+        st = compute_status(self._current_record["id"], self._session, criteria)
+        a  = accent()
 
-        def _style(ok: bool, na: bool = False) -> str:
-            if na:  return "color:#555; font-size:12px;"
-            if ok:  return f"color:{a}; font-size:12px;"
-            return          "color:#555; font-size:12px;"
+        active_keys = [k for k in FIELD_LABELS if criteria.get(k, False)]
 
-        face_na = st["face_detail"] == "none"
+        # Rebuild dot widgets if criteria changed
+        if set(self._status_dots.keys()) != set(active_keys):
+            # Remove all existing dot widgets from the layout
+            for dot in self._status_dots.values():
+                self._status_row.removeWidget(dot)
+                dot.deleteLater()
+            self._status_dots.clear()
+            # Re-insert dots before score label
+            for key in active_keys:
+                dot = QLabel()
+                dot.setFixedSize(16, 16)
+                dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                dot.setStyleSheet("font-size:11px;")
+                dot.setToolTip(FIELD_LABELS[key])
+                self._status_dots[key] = dot
+                # Insert before score label (last item before stretch)
+                self._status_row.insertWidget(
+                    len(self._status_dots) - 1, dot
+                )
 
-        dots = [
-            (self._dot_title,   st["has_title"],   False,   "Title"),
-            (self._dot_subject, st["has_subject"],  False,   "Subject"),
-            (self._dot_face,    st["face_ok"],      face_na, "Named face" if not face_na else "No faces"),
-            (self._dot_renamed, st["renamed"],      False,   "Renamed"),
-        ]
-        for lbl, ok, na, tip in dots:
-            lbl.setText(_dot(ok, na))
-            lbl.setStyleSheet(_style(ok, na))
-            lbl.setToolTip(tip)
+        # Update dot appearance — consistent colours with grid overlay + quick-edit
+        _COL_OK  = "#a6e3a1"   # soft green
+        _COL_ERR = "#f38ba8"   # soft red
+        _COL_AMB = "#e6a817"   # amber
+        fields      = st.get("fields", {})
+        intentional = st.get("intentional", False)
+        for key, dot in self._status_dots.items():
+            ok = fields.get(key, False)
+            if intentional:
+                dot.setText("◐")
+                dot.setStyleSheet(f"color:{_COL_AMB}; font-size:11px;")
+                dot.setToolTip(f"{FIELD_LABELS[key]} — intentionally incomplete")
+            elif ok:
+                dot.setText("●")
+                dot.setStyleSheet(f"color:{_COL_OK}; font-size:11px;")
+                dot.setToolTip(f"{FIELD_LABELS[key]} ✓")
+            else:
+                dot.setText("●")
+                dot.setStyleSheet(f"color:{_COL_ERR}; font-size:11px;")
+                dot.setToolTip(f"{FIELD_LABELS[key]} — missing")
 
-        self._status_score_lbl.setText(f"{st['score']}/4")
+        score     = st.get("score", 0)
+        max_score = st.get("max_score", len(active_keys))
+        complete  = st.get("complete", False)
+        self._status_score_lbl.setText(
+            f"{'✓' if complete else str(score)}/{max_score}"
+        )
+        self._status_score_lbl.setStyleSheet(
+            "color:#a6e3a1; font-size:10px;" if complete else "color:#777; font-size:10px;"
+        )
 
-        # Auto-rename when conditions 1–3 met and not yet renamed
+        # Auto-rename when basic conditions met and not yet renamed
         if not st["renamed"] and st["has_title"] and st["has_subject"] and st["face_ok"]:
             renamed = maybe_auto_rename(self._current_record["id"], self._session)
             if renamed:
-                # Reload file record with new filename/path
                 from memoria.database.models import File
                 fr = self._session.query(File).get(self._current_record["id"])
                 if fr:

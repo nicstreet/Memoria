@@ -131,8 +131,7 @@ class SidebarFilters(QWidget):
         self._build_file_type()
         self._build_date_range()
         self._build_location()
-        self._build_people()
-        self._build_tags()
+        self._build_people_and_tags()
         self._build_duplicates()
         self._build_unidentified()
         self._build_ai_metadata()
@@ -226,16 +225,17 @@ class SidebarFilters(QWidget):
         date_style = f"""
             QDateEdit {{
                 background: #3a3a3a; border: 1px solid #555;
-                border-radius: 4px; color: #d4d4d4; padding: 2px 4px; font-size: 12px;
+                border-radius: 4px; color: #d4d4d4;
+                padding: 2px 2px; font-size: 11px;
             }}
             QDateEdit:focus {{ border-color: #7c6af7; }}
             QDateEdit::drop-down {{
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 20px;
+                width: 16px;
                 border-left: 1px solid #555;
             }}
-            QDateEdit::down-arrow {{ image: {_ARROW_URL}; width: 20px; height: 12px; }}
+            QDateEdit::down-arrow {{ image: {_ARROW_URL}; width: 16px; height: 10px; }}
             QCalendarWidget {{ background: #2d2d2d; color: #d4d4d4; }}
             QCalendarWidget QToolButton {{
                 background: #3a3a3a; color: #d4d4d4; border-radius: 3px;
@@ -247,31 +247,44 @@ class SidebarFilters(QWidget):
             }}
             QCalendarWidget QAbstractItemView:disabled {{ color: #555; }}
         """
+        lbl_style = "color: #888; font-size: 10px; background: transparent;"
 
-        from_label = QLabel("From")
-        from_label.setStyleSheet("color: #888; font-size: 11px;")
+        # From / To side-by-side
+        date_row = QWidget()
+        date_row.setStyleSheet("background: transparent;")
+        dr = QHBoxLayout(date_row)
+        dr.setContentsMargins(0, 0, 0, 0)
+        dr.setSpacing(8)
+
+        from_col = QWidget(); from_col.setStyleSheet("background: transparent;")
+        fv = QVBoxLayout(from_col); fv.setContentsMargins(0, 0, 0, 0); fv.setSpacing(2)
+        from_label = QLabel("From"); from_label.setStyleSheet(lbl_style)
         self._date_from = QDateEdit()
         self._date_from.setCalendarPopup(True)
         self._date_from.setDate(QDate(2000, 1, 1))
-        self._date_from.setDisplayFormat("dd MMM yyyy")
+        self._date_from.setDisplayFormat("dd/MM/yyyy")
         self._date_from.setStyleSheet(date_style)
         self._date_from.dateChanged.connect(self._emit)
         self._date_from.setEnabled(False)
+        fv.addWidget(from_label)
+        fv.addWidget(self._date_from)
+        dr.addWidget(from_col, stretch=1)
 
-        to_label = QLabel("To")
-        to_label.setStyleSheet("color: #888; font-size: 11px;")
+        to_col = QWidget(); to_col.setStyleSheet("background: transparent;")
+        tv = QVBoxLayout(to_col); tv.setContentsMargins(0, 0, 0, 0); tv.setSpacing(2)
+        to_label = QLabel("To"); to_label.setStyleSheet(lbl_style)
         self._date_to = QDateEdit()
         self._date_to.setCalendarPopup(True)
         self._date_to.setDate(QDate.currentDate())
-        self._date_to.setDisplayFormat("dd MMM yyyy")
+        self._date_to.setDisplayFormat("dd/MM/yyyy")
         self._date_to.setStyleSheet(date_style)
         self._date_to.dateChanged.connect(self._emit)
         self._date_to.setEnabled(False)
+        tv.addWidget(to_label)
+        tv.addWidget(self._date_to)
+        dr.addWidget(to_col, stretch=1)
 
-        sec.body().addWidget(from_label)
-        sec.body().addWidget(self._date_from)
-        sec.body().addWidget(to_label)
-        sec.body().addWidget(self._date_to)
+        sec.body().addWidget(date_row)
         self._layout.addWidget(sec)
 
     def _build_location(self):
@@ -301,29 +314,64 @@ class SidebarFilters(QWidget):
         self._location_section.body().addWidget(self._location_combo)
         self._layout.addWidget(self._location_section)
 
-    def _build_people(self):
-        from memoria.ui.fluent_icons import fi
-        self._people_section = _Section("People", icon=fi.PERSON)
+    def _build_people_and_tags(self):
+        from memoria.ui.fluent_icons import fi, FONT_NAME
+        from PyQt6.QtGui import QFont
+
+        # Combined section — single divider line, "People & Tags" heading
+        self._people_tags_section = _Section("People & Tags", icon=fi.PERSON)
+
+        lbl_style = "color:#888; font-size:10px; background:transparent;"
+        pair = QWidget(); pair.setStyleSheet("background: transparent;")
+        h = QHBoxLayout(pair)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+
+        # ── People column ──────────────────────────────────────────────────
+        p_col = QWidget(); p_col.setStyleSheet("background: transparent;")
+        pv = QVBoxLayout(p_col); pv.setContentsMargins(0, 0, 0, 0); pv.setSpacing(2)
+
+        p_hdr = QWidget(); p_hdr.setStyleSheet("background: transparent;")
+        p_hdr_row = QHBoxLayout(p_hdr)
+        p_hdr_row.setContentsMargins(0, 0, 0, 0); p_hdr_row.setSpacing(4)
+        p_icon = QLabel(fi.PERSON); p_icon.setFont(QFont(FONT_NAME, 10))
+        p_icon.setStyleSheet("color:#888; background:transparent;")
+        p_lbl = QLabel("People"); p_lbl.setStyleSheet(lbl_style)
+        p_hdr_row.addWidget(p_icon); p_hdr_row.addWidget(p_lbl); p_hdr_row.addStretch()
+        pv.addWidget(p_hdr)
+
         self._people_list = QListWidget()
-        self._people_list.setFixedHeight(90)
+        self._people_list.setFixedHeight(100)
         self._people_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         self._people_list.setStyleSheet(self._list_style())
         self._people_list.itemSelectionChanged.connect(self._emit)
-        self._people_section.body().addWidget(self._people_list)
-        self._layout.addWidget(self._people_section)
-        self._people_section.setVisible(False)
+        pv.addWidget(self._people_list)
+        h.addWidget(p_col, stretch=1)
 
-    def _build_tags(self):
-        from memoria.ui.fluent_icons import fi
-        self._tags_section = _Section("Tags", icon=fi.TAG)
+        # ── Tags column ────────────────────────────────────────────────────
+        t_col = QWidget(); t_col.setStyleSheet("background: transparent;")
+        tv = QVBoxLayout(t_col); tv.setContentsMargins(0, 0, 0, 0); tv.setSpacing(2)
+
+        t_hdr = QWidget(); t_hdr.setStyleSheet("background: transparent;")
+        t_hdr_row = QHBoxLayout(t_hdr)
+        t_hdr_row.setContentsMargins(0, 0, 0, 0); t_hdr_row.setSpacing(4)
+        t_icon = QLabel(fi.TAG); t_icon.setFont(QFont(FONT_NAME, 10))
+        t_icon.setStyleSheet("color:#888; background:transparent;")
+        t_lbl = QLabel("Tags"); t_lbl.setStyleSheet(lbl_style)
+        t_hdr_row.addWidget(t_icon); t_hdr_row.addWidget(t_lbl); t_hdr_row.addStretch()
+        tv.addWidget(t_hdr)
+
         self._tags_list = QListWidget()
-        self._tags_list.setFixedHeight(90)
+        self._tags_list.setFixedHeight(100)
         self._tags_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         self._tags_list.setStyleSheet(self._list_style())
         self._tags_list.itemSelectionChanged.connect(self._emit)
-        self._tags_section.body().addWidget(self._tags_list)
-        self._layout.addWidget(self._tags_section)
-        self._tags_section.setVisible(False)
+        tv.addWidget(self._tags_list)
+        h.addWidget(t_col, stretch=1)
+
+        self._people_tags_section.body().addWidget(pair)
+        self._layout.addWidget(self._people_tags_section)
+        self._people_tags_section.setVisible(False)
 
     def _build_duplicates(self):
         from memoria.ui.fluent_icons import fi
@@ -377,7 +425,6 @@ class SidebarFilters(QWidget):
             item = QListWidgetItem(f"{name}  ({count})")
             item.setData(Qt.ItemDataRole.UserRole, pid)
             self._people_list.addItem(item)
-        self._people_section.setVisible(len(people) > 0)
 
         # Tags
         self._tags_list.clear()
@@ -385,7 +432,9 @@ class SidebarFilters(QWidget):
             item = QListWidgetItem(f"{label}  ({count})")
             item.setData(Qt.ItemDataRole.UserRole, tid)
             self._tags_list.addItem(item)
-        self._tags_section.setVisible(len(tags) > 0)
+
+        # Show combined section if either list has entries
+        self._people_tags_section.setVisible(len(people) > 0 or len(tags) > 0)
 
     # ── Public API ───────────────────────────────────────────────────────────
 

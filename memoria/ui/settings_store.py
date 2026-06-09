@@ -17,6 +17,7 @@ _DEFAULTS = {
     # UI
     "columns":          5,
     "accent_colour":    "#7c6af7",
+    "status_overlay":   False,
     "jpeg_quality":     100,
     "rename_format":    "%y-%m-%d_%H-%M_{subject}",
     "show_extensions":  True,

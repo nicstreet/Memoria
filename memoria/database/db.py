@@ -29,9 +29,10 @@ def get_engine():
 def _migrate(engine):
     """Add columns introduced after initial schema creation (idempotent)."""
     new_columns = [
-        ("metadata", "title",   "TEXT"),
-        ("metadata", "subject", "TEXT"),
-        ("files",    "renamed", "INTEGER NOT NULL DEFAULT 0"),
+        ("metadata", "title",     "TEXT"),
+        ("metadata", "subject",   "TEXT"),
+        ("metadata", "copyright", "TEXT"),
+        ("files",    "renamed",   "INTEGER NOT NULL DEFAULT 0"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in new_columns:

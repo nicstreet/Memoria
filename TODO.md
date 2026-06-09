@@ -29,21 +29,15 @@
 
 - [ ] **`?` Help button colour** — currently renders in accent colour; should use the same default muted colour (`#aaa`) as the other title bar icon buttons
 - [ ] **Options dialog button cluster padding** — OK / Cancel / Apply buttons sit too close to page content; add top padding/margin to the button row so it has breathing room from the fields above
+- [ ] **Appearance setting: Menu style** — Text / Icons / Icons+Text option (deferred from Stage 2)
 
 ---
 
-## Stage 2 — Collapsible Navigation & Sidebar Rail
-*Implement the Windows Photos-style navigation rail.*
+## Stage 2 — Navigation & Favourites
+*Adding quick-access views and a favourites system.*
 
-- [ ] Collapsible left icon rail:
-  - [ ] Collapsed state: narrow strip, icons only
-  - [ ] Expanded state: icon + label per item
-  - [ ] Hamburger toggle button at top of rail
-  - [ ] Animate / snap between states
-- [ ] Rail items: Gallery, Favourites, People, Albums, Folders (This PC)
-- [ ] `is_favourite` field added to `files` DB table
-- [ ] Favourites rail item filters to favourited photos
-- [ ] Appearance setting: Menu style — Text / Icons only / Icons + Text
+- [ ] **Gallery, Favourites, People, Albums, Folders** — decide on placement (top bar tabs, sidebar header buttons, or dedicated nav strip) and implement navigation between views
+- [ ] **`is_favourite` field** added to `files` DB table → Favourites filter in sidebar + dedicated Favourites view
 
 ---
 

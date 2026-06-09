@@ -15,10 +15,11 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
-    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox,
-    QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractItemView, QCheckBox, QColorDialog, QComboBox, QDialog,
+    QDialogButtonBox, QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton,
-    QScrollArea, QSlider, QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
+    QScrollArea, QSlider, QSpinBox, QStackedWidget, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 # ── Shared layout helpers ─────────────────────────────────────────────────────
@@ -456,6 +457,7 @@ class _AppearancePage(QWidget):
     def __init__(self, settings: dict, parent=None):
         super().__init__(parent)
         self._colour = settings.get("accent_colour", "#7c6af7")
+        self._overlay_on = settings.get("status_overlay", False)
 
         page, v = _page_layout()
         outer = QVBoxLayout(self)
@@ -502,6 +504,18 @@ class _AppearancePage(QWidget):
         )
 
         v.addWidget(group)
+
+        # ── Status overlay card ───────────────────────────────────────────────
+        overlay_group = _SettingGroup()
+        self._overlay_switch = _ToggleSwitch(checked=self._overlay_on)
+        overlay_group.add_row(
+            "Status overlay",
+            "Show a completion-status dot bar on every photo thumbnail. "
+            "Green = fields satisfied, Red = missing, Amber = intentionally incomplete. "
+            "Click the bar to open the quick-edit dialog.",
+            self._overlay_switch,
+        )
+        v.addWidget(overlay_group)
         v.addStretch()
 
     def _pick_colour(self):
@@ -529,6 +543,7 @@ class _AppearancePage(QWidget):
 
     def apply(self, settings: dict):
         settings["accent_colour"] = self._colour
+        settings["status_overlay"] = self._overlay_switch.isChecked()
         self._live_apply()
 
 
@@ -1027,6 +1042,575 @@ class _LibraryPage(QWidget):
         pass  # All changes are written to the DB immediately
 
 
+# ── Status / Completion Criteria page ────────────────────────────────────────
+
+class _StatusPage(QWidget):
+    """
+    Options page — configure which fields must be filled for a photo to be
+    considered 'complete'.  Changes are saved to AppSetting immediately.
+    """
+
+    _CHK_CSS = """
+        QCheckBox { color:#d4d4d4; font-size:12px; spacing:8px; }
+        QCheckBox::indicator {
+            width:14px; height:14px; border-radius:3px;
+            border:1px solid #555; background:#2a2a2a;
+        }
+        QCheckBox::indicator:checked {
+            background:#7c6af7; border-color:#7c6af7;
+        }
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._criteria: dict = {}
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea{border:none;background:#1e1e1e;}")
+        outer.addWidget(scroll)
+
+        page, v = _page_layout()
+        scroll.setWidget(page)
+
+        v.addWidget(_section_header("Completion Criteria"))
+
+        # ── Criteria card ────────────────────────────────────────────────────
+        card = _SettingGroup()
+        card._layout.setContentsMargins(16, 12, 16, 12)
+        card._layout.setSpacing(6)
+
+        title_lbl = QLabel("Required fields")
+        title_lbl.setStyleSheet(_TITLE_CSS)
+        card._layout.addWidget(title_lbl)
+
+        desc_lbl = QLabel(
+            "Tick each field that must be completed for a photo to be considered "
+            "fully catalogued.  The grid overlay and status indicators update in real-time."
+        )
+        desc_lbl.setStyleSheet(_DESC_CSS)
+        desc_lbl.setWordWrap(True)
+        card._layout.addWidget(desc_lbl)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background:#333;border:none;")
+        card._layout.addWidget(sep)
+
+        from memoria.file_status import DEFAULT_CRITERIA, FIELD_LABELS, get_criteria
+        self._criteria = get_criteria()
+
+        self._checks: dict[str, QCheckBox] = {}
+        for key, label in FIELD_LABELS.items():
+            row = QWidget()
+            row.setStyleSheet("background:transparent;")
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(0)
+            chk = QCheckBox(label)
+            chk.setStyleSheet(self._CHK_CSS)
+            chk.setChecked(bool(self._criteria.get(key, False)))
+            chk.stateChanged.connect(self._on_change)
+            self._checks[key] = chk
+            h.addWidget(chk)
+
+            # Min-tags spinner for the tags criterion
+            if key == "require_tags":
+                from PyQt6.QtWidgets import QSpinBox
+                self._min_tags_spin = QSpinBox()
+                self._min_tags_spin.setRange(1, 20)
+                self._min_tags_spin.setValue(int(self._criteria.get("min_tags", 1)))
+                self._min_tags_spin.setSuffix(" tag(s) minimum")
+                self._min_tags_spin.setFixedWidth(160)
+                self._min_tags_spin.setStyleSheet(
+                    "QSpinBox{background:#3a3a3a;border:1px solid #555;"
+                    "border-radius:4px;color:#d4d4d4;padding:2px 6px;font-size:11px;}"
+                )
+                self._min_tags_spin.setEnabled(chk.isChecked())
+                chk.stateChanged.connect(
+                    lambda s, sp=self._min_tags_spin: sp.setEnabled(bool(s))
+                )
+                self._min_tags_spin.valueChanged.connect(self._on_change)
+                h.addSpacing(16)
+                h.addWidget(self._min_tags_spin)
+
+            h.addStretch()
+            card._layout.addWidget(row)
+
+        v.addWidget(card)
+
+        # ── Library summary card ─────────────────────────────────────────────
+        summary_card = _SettingGroup()
+        summary_card._layout.setContentsMargins(16, 12, 16, 12)
+        summary_card._layout.setSpacing(6)
+
+        summary_title = QLabel("Library completion")
+        summary_title.setStyleSheet(_TITLE_CSS)
+        summary_card._layout.addWidget(summary_title)
+
+        self._summary_lbl = QLabel("Click Refresh to calculate…")
+        self._summary_lbl.setStyleSheet(_DESC_CSS)
+        summary_card._layout.addWidget(self._summary_lbl)
+
+        refresh_btn = QPushButton("↺  Refresh stats")
+        refresh_btn.setFixedHeight(26)
+        refresh_btn.setStyleSheet(
+            "QPushButton{background:#3a3a3a;color:#d4d4d4;border:1px solid #555;"
+            "border-radius:4px;padding:2px 12px;font-size:12px;}"
+            "QPushButton:hover{background:#4a4a4a;}"
+        )
+        refresh_btn.clicked.connect(self._refresh_stats)
+        summary_card._layout.addWidget(refresh_btn)
+
+        v.addWidget(summary_card)
+        v.addStretch()
+
+    def _on_change(self):
+        """Write updated criteria to DB immediately."""
+        from memoria.file_status import set_criteria
+        c = dict(self._criteria)
+        for key, chk in self._checks.items():
+            c[key] = chk.isChecked()
+        c["min_tags"] = self._min_tags_spin.value()
+        self._criteria = c
+        set_criteria(c)
+
+    def _refresh_stats(self):
+        try:
+            from memoria.database.db import get_session
+            from memoria.file_status import count_library_completion
+            session = get_session()
+            complete, intentional, total = count_library_completion(
+                session, self._criteria
+            )
+            session.close()
+            done = complete + intentional
+            pct  = round(done / total * 100) if total else 0
+            self._summary_lbl.setText(
+                f"<b>{complete}</b> complete,  "
+                f"<b>{intentional}</b> intentionally incomplete,  "
+                f"<b>{total - done}</b> still need work  "
+                f"— {pct}% of {total:,} photos"
+            )
+        except Exception as e:
+            self._summary_lbl.setText(f"Error: {e}")
+
+    def apply(self, settings: dict):
+        pass   # criteria written to DB on every change
+
+
+# ── Locations page ────────────────────────────────────────────────────────────
+
+class _LocationsPage(QWidget):
+    """
+    Options page — manage location labels stored against photos.
+
+    Shows every distinct location currently in the library with a photo count.
+    Operations: Rename (updates all photos using that label), Delete (clears the
+    label from all photos), and Merge (fold one label into another).
+    """
+
+    _TABLE_CSS = """
+        QTableWidget {
+            background:#2d2d2d; border:1px solid #3a3a3a;
+            border-radius:4px; font-size:12px; color:#d4d4d4;
+            gridline-color:#333; outline:none;
+        }
+        QTableWidget::item { padding:4px 10px; border:none; }
+        QTableWidget::item:selected { background:#3e3e6a; color:#fff; }
+        QHeaderView::section {
+            background:#252526; color:#777; font-size:10px; font-weight:600;
+            border:none; border-bottom:1px solid #3a3a3a; padding:3px 10px;
+        }
+        QScrollBar:vertical {
+            background:#252526; width:8px; border-radius:4px;
+        }
+        QScrollBar::handle:vertical { background:#555; border-radius:4px; }
+    """
+    _BTN_CSS = (
+        "QPushButton{background:#3a3a3a;color:#d4d4d4;border:1px solid #555;"
+        "border-radius:4px;padding:4px 14px;font-size:12px;}"
+        "QPushButton:hover{background:#4a4a4a;}"
+        "QPushButton:disabled{color:#555;border-color:#333;}"
+    )
+    _DEL_BTN_CSS = (
+        "QPushButton{background:#3a2020;color:#f38ba8;border:1px solid #5a3030;"
+        "border-radius:4px;padding:4px 14px;font-size:12px;}"
+        "QPushButton:hover{background:#5a2020;}"
+        "QPushButton:disabled{color:#555;border-color:#333;}"
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea{border:none;background:#1e1e1e;}")
+        outer.addWidget(scroll)
+
+        page, v = _page_layout()
+        scroll.setWidget(page)
+
+        v.addWidget(_section_header("Locations"))
+
+        # ── Card ─────────────────────────────────────────────────────────────
+        card = _SettingGroup()
+        card._layout.setContentsMargins(16, 12, 16, 12)
+        card._layout.setSpacing(8)
+
+        title_lbl = QLabel("Location Labels")
+        title_lbl.setStyleSheet(_TITLE_CSS)
+        card._layout.addWidget(title_lbl)
+
+        desc_lbl = QLabel(
+            "All location labels assigned to photos in your library. "
+            "Select one to rename it across all photos, merge it into another label, "
+            "or clear it entirely."
+        )
+        desc_lbl.setStyleSheet(_DESC_CSS)
+        desc_lbl.setWordWrap(True)
+        card._layout.addWidget(desc_lbl)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background:#333;border:none;")
+        card._layout.addWidget(sep)
+
+        # Table
+        self._table = QTableWidget(0, 2)
+        self._table.setHorizontalHeaderLabels(["Location label", "Photos"])
+        self._table.setStyleSheet(self._TABLE_CSS)
+        self._table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
+        self._table.setSelectionMode(
+            QTableWidget.SelectionMode.SingleSelection
+        )
+        self._table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._table.verticalHeader().hide()
+        self._table.setShowGrid(False)
+        self._table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )
+        self._table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Fixed
+        )
+        self._table.setColumnWidth(1, 72)
+        self._table.setMinimumHeight(180)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        card._layout.addWidget(self._table)
+
+        # Buttons row
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.setContentsMargins(0, 4, 0, 0)
+
+        self._rename_btn = QPushButton("✏  Rename…")
+        self._rename_btn.setFixedHeight(28)
+        self._rename_btn.setStyleSheet(self._BTN_CSS)
+        self._rename_btn.setEnabled(False)
+        self._rename_btn.clicked.connect(self._rename_location)
+        btn_row.addWidget(self._rename_btn)
+
+        self._merge_btn = QPushButton("⇒  Merge into…")
+        self._merge_btn.setFixedHeight(28)
+        self._merge_btn.setStyleSheet(self._BTN_CSS)
+        self._merge_btn.setEnabled(False)
+        self._merge_btn.clicked.connect(self._merge_location)
+        btn_row.addWidget(self._merge_btn)
+
+        self._delete_btn = QPushButton("✕  Clear from photos")
+        self._delete_btn.setFixedHeight(28)
+        self._delete_btn.setStyleSheet(self._DEL_BTN_CSS)
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.clicked.connect(self._delete_location)
+        btn_row.addWidget(self._delete_btn)
+
+        btn_row.addStretch()
+
+        refresh_btn = QPushButton("↺")
+        refresh_btn.setFixedSize(28, 28)
+        refresh_btn.setToolTip("Refresh list")
+        refresh_btn.setStyleSheet(self._BTN_CSS)
+        refresh_btn.clicked.connect(self._load)
+        btn_row.addWidget(refresh_btn)
+
+        card._layout.addLayout(btn_row)
+
+        # Status label
+        self._status_lbl = QLabel("")
+        self._status_lbl.setStyleSheet("color:#777;font-size:11px;")
+        card._layout.addWidget(self._status_lbl)
+
+        v.addWidget(card)
+        v.addStretch()
+
+        self._load()
+
+    # ── Data ─────────────────────────────────────────────────────────────────
+
+    def _load(self):
+        self._table.setRowCount(0)
+        try:
+            from memoria.database.db import get_session
+            from memoria.database.models import Metadata
+            from sqlalchemy import func
+            session = get_session()
+            rows = (
+                session.query(
+                    Metadata.location_label,
+                    func.count(Metadata.file_id).label("n"),
+                )
+                .filter(
+                    Metadata.location_label.isnot(None),
+                    Metadata.location_label != "",
+                )
+                .group_by(Metadata.location_label)
+                .order_by(Metadata.location_label)
+                .all()
+            )
+            session.close()
+        except Exception as e:
+            self._status_lbl.setText(f"Error loading locations: {e}")
+            return
+
+        for label, count in rows:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            lbl_item = QTableWidgetItem(label)
+            cnt_item = QTableWidgetItem(str(count))
+            cnt_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+            )
+            self._table.setItem(r, 0, lbl_item)
+            self._table.setItem(r, 1, cnt_item)
+
+        n = self._table.rowCount()
+        self._status_lbl.setText(
+            f"{n} location{'s' if n != 1 else ''} in library."
+        )
+        self._on_selection_changed()
+
+    def _selected_label(self) -> str | None:
+        row = self._table.currentRow()
+        if row < 0:
+            return None
+        item = self._table.item(row, 0)
+        return item.text() if item else None
+
+    def _on_selection_changed(self):
+        sel = self._selected_label() is not None
+        self._rename_btn.setEnabled(sel)
+        self._merge_btn.setEnabled(sel)
+        self._delete_btn.setEnabled(sel)
+
+    # ── Actions ───────────────────────────────────────────────────────────────
+
+    def _rename_location(self):
+        old = self._selected_label()
+        if not old:
+            return
+        text, ok = _input_dialog(
+            self, "Rename Location",
+            f'Rename "{old}" to:',
+            old,
+        )
+        if not ok or not text.strip() or text.strip() == old:
+            return
+        new = text.strip()
+        try:
+            from memoria.database.db import get_session
+            from memoria.database.models import Metadata
+            session = get_session()
+            updated = (
+                session.query(Metadata)
+                .filter_by(location_label=old)
+                .all()
+            )
+            for m in updated:
+                m.location_label = new
+            session.commit()
+            session.close()
+            count = len(updated)
+            self._status_lbl.setText(
+                f'Renamed "{old}" → "{new}" on {count} photo{"s" if count != 1 else ""}.'
+            )
+            self._load()
+        except Exception as e:
+            self._status_lbl.setText(f"Error: {e}")
+
+    def _merge_location(self):
+        old = self._selected_label()
+        if not old:
+            return
+        # Build list of other labels
+        labels = []
+        for r in range(self._table.rowCount()):
+            item = self._table.item(r, 0)
+            if item and item.text() != old:
+                labels.append(item.text())
+
+        if not labels:
+            QMessageBox.information(
+                self, "Merge", "No other locations to merge into."
+            )
+            return
+
+        target, ok = _combo_dialog(
+            self, "Merge Location",
+            f'Merge "{old}" into which location?',
+            labels,
+        )
+        if not ok or not target:
+            return
+
+        try:
+            from memoria.database.db import get_session
+            from memoria.database.models import Metadata
+            session = get_session()
+            updated = (
+                session.query(Metadata)
+                .filter_by(location_label=old)
+                .all()
+            )
+            for m in updated:
+                m.location_label = target
+            session.commit()
+            session.close()
+            count = len(updated)
+            self._status_lbl.setText(
+                f'Merged "{old}" → "{target}" ({count} photo{"s" if count != 1 else ""} updated).'
+            )
+            self._load()
+        except Exception as e:
+            self._status_lbl.setText(f"Error: {e}")
+
+    def _delete_location(self):
+        old = self._selected_label()
+        if not old:
+            return
+        row = self._table.currentRow()
+        count_item = self._table.item(row, 1)
+        count = int(count_item.text()) if count_item else "?"
+        reply = QMessageBox.question(
+            self,
+            "Clear Location",
+            f'Remove the label "{old}" from {count} photo{"s" if count != 1 else ""}?\n\n'
+            f'The label will be cleared — photos are not deleted.',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            from memoria.database.db import get_session
+            from memoria.database.models import Metadata
+            session = get_session()
+            (
+                session.query(Metadata)
+                .filter_by(location_label=old)
+                .update({"location_label": None},
+                        synchronize_session="fetch")
+            )
+            session.commit()
+            session.close()
+            self._status_lbl.setText(
+                f'Cleared "{old}" from {count} photo{"s" if count != 1 else ""}.'
+            )
+            self._load()
+        except Exception as e:
+            self._status_lbl.setText(f"Error: {e}")
+
+    def apply(self, settings: dict):
+        pass   # All changes written to DB immediately
+
+
+# ── Small dialog helpers ──────────────────────────────────────────────────────
+
+def _input_dialog(parent, title: str, label: str,
+                  default: str = "") -> tuple[str, bool]:
+    """Simple text-input dialog styled for the dark theme."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setFixedWidth(400)
+    dlg.setStyleSheet(
+        "QDialog{background:#1e1e1e;color:#d4d4d4;}"
+        "QLabel{color:#d4d4d4;font-size:12px;}"
+        "QLineEdit{background:#3a3a3a;border:1px solid #555;border-radius:4px;"
+        "color:#d4d4d4;padding:4px 8px;font-size:12px;}"
+        "QLineEdit:focus{border-color:#7c6af7;}"
+        "QPushButton{background:#3a3a3a;color:#d4d4d4;border:1px solid #555;"
+        "border-radius:4px;padding:4px 16px;font-size:12px;}"
+        "QPushButton:hover{background:#4a4a4a;}"
+        "QPushButton#ok{background:#7c6af7;border-color:#7c6af7;color:#fff;}"
+        "QPushButton#ok:hover{background:#9480ff;}"
+    )
+    v = QVBoxLayout(dlg)
+    v.setContentsMargins(16, 14, 16, 14)
+    v.setSpacing(10)
+    v.addWidget(QLabel(label))
+    edit = QLineEdit(default)
+    edit.selectAll()
+    v.addWidget(edit)
+    brow = QHBoxLayout()
+    brow.addStretch()
+    cancel = QPushButton("Cancel"); brow.addWidget(cancel)
+    ok     = QPushButton("OK");     ok.setObjectName("ok"); brow.addWidget(ok)
+    v.addLayout(brow)
+    cancel.clicked.connect(dlg.reject)
+    ok.clicked.connect(dlg.accept)
+    edit.returnPressed.connect(dlg.accept)
+    result = dlg.exec()
+    return edit.text(), result == QDialog.DialogCode.Accepted
+
+
+def _combo_dialog(parent, title: str, label: str,
+                  items: list[str]) -> tuple[str, bool]:
+    """Combo-select dialog styled for the dark theme."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setFixedWidth(400)
+    dlg.setStyleSheet(
+        "QDialog{background:#1e1e1e;color:#d4d4d4;}"
+        "QLabel{color:#d4d4d4;font-size:12px;}"
+        "QComboBox{background:#3a3a3a;border:1px solid #555;border-radius:4px;"
+        "color:#d4d4d4;padding:4px 8px;font-size:12px;}"
+        "QComboBox::drop-down{border:none;width:20px;}"
+        "QComboBox QAbstractItemView{background:#2d2d2d;color:#d4d4d4;"
+        "selection-background-color:#5a4fd4;border:1px solid #555;}"
+        "QPushButton{background:#3a3a3a;color:#d4d4d4;border:1px solid #555;"
+        "border-radius:4px;padding:4px 16px;font-size:12px;}"
+        "QPushButton:hover{background:#4a4a4a;}"
+        "QPushButton#ok{background:#7c6af7;border-color:#7c6af7;color:#fff;}"
+        "QPushButton#ok:hover{background:#9480ff;}"
+    )
+    v = QVBoxLayout(dlg)
+    v.setContentsMargins(16, 14, 16, 14)
+    v.setSpacing(10)
+    v.addWidget(QLabel(label))
+    combo = QComboBox()
+    for item in items:
+        combo.addItem(item)
+    v.addWidget(combo)
+    brow = QHBoxLayout()
+    brow.addStretch()
+    cancel = QPushButton("Cancel"); brow.addWidget(cancel)
+    ok     = QPushButton("OK");     ok.setObjectName("ok"); brow.addWidget(ok)
+    v.addLayout(brow)
+    cancel.clicked.connect(dlg.reject)
+    ok.clicked.connect(dlg.accept)
+    result = dlg.exec()
+    return combo.currentText(), result == QDialog.DialogCode.Accepted
+
+
 # ── Main dialog ───────────────────────────────────────────────────────────────
 
 class OptionsDialog(QDialog):
@@ -1095,7 +1679,7 @@ class OptionsDialog(QDialog):
         """)
         self._section_list.setFrameShape(QListWidget.Shape.NoFrame)
 
-        for name in ("General", "Editor", "Metadata", "Appearance", "Hotkeys", "Library", "AI"):
+        for name in ("General", "Editor", "Metadata", "Appearance", "Hotkeys", "Library", "Locations", "Status", "AI"):
             self._section_list.addItem(QListWidgetItem(name))
         self._section_list.setCurrentRow(0)
         self._section_list.currentRowChanged.connect(self._on_section_changed)
@@ -1118,6 +1702,8 @@ class OptionsDialog(QDialog):
             _AppearancePage(self._settings),
             _HotkeysPage(),
             _LibraryPage(),
+            _LocationsPage(),
+            _StatusPage(),
             _AIPage(self._settings),
         ]
         for page in self._pages:

@@ -265,6 +265,7 @@ class MainWindow(QMainWindow):
         self._all_records: list[dict] = []
         ui_settings = load_settings()
         self._columns = ui_settings.get("columns", 5)
+        self._status_overlay_on = ui_settings.get("status_overlay", False)
 
         from memoria.ui.theme import set_accent
         set_accent(ui_settings.get("accent_colour", "#7c6af7"))
@@ -291,11 +292,13 @@ class MainWindow(QMainWindow):
         self._grid_model = PhotoGridModel(self._thumbnail_cache)
         self._grid_view = PhotoGridView()
         self._grid_view.set_model(self._grid_model)
+        self._grid_view.set_overlay_enabled(self._status_overlay_on)
         self._grid_view.file_selected.connect(self._on_file_selected)
         self._grid_view.rotate_requested.connect(self._on_rotate_requested)
         self._grid_view.face_review_requested.connect(self._on_face_review_requested)
         self._grid_view.not_duplicate_requested.connect(self._on_not_duplicate_requested)
         self._grid_view.meta_field_changed.connect(self._on_meta_field_changed)
+        self._grid_view.status_edit_requested.connect(self._on_status_edit_requested)
 
         grid_container = self._build_grid_container()
 
@@ -393,6 +396,16 @@ class MainWindow(QMainWindow):
         sel_none.setStyleSheet(btn_style)
         sel_none.clicked.connect(self._grid_view.clearSelection)
         tb_layout.addWidget(sel_none)
+
+        # Next incomplete button
+        self._next_incomplete_btn = QPushButton("⟶ Next Incomplete")
+        self._next_incomplete_btn.setFixedHeight(24)
+        self._next_incomplete_btn.setToolTip(
+            "Jump to the next photo that hasn't met all completion criteria (Ctrl+])"
+        )
+        self._next_incomplete_btn.setStyleSheet(btn_style)
+        self._next_incomplete_btn.clicked.connect(self._go_next_incomplete)
+        tb_layout.addWidget(self._next_incomplete_btn)
 
         tb_layout.addStretch()
 
@@ -642,6 +655,38 @@ class MainWindow(QMainWindow):
         self._apply_filters(self._sidebar.current_filters())
         self._refresh_duplicate_ids()
 
+    def _refresh_sidebar_counts(self):
+        """Re-query tags, people and locations and repopulate the sidebar counts.
+        Cheaper than a full _load_records() — does not reload the file grid."""
+        try:
+            from sqlalchemy import func
+            session = get_session()
+
+            locations = [
+                r.location_label for r in
+                session.query(Metadata.location_label)
+                .filter(Metadata.location_label.isnot(None))
+                .distinct().all()
+            ]
+            people = [
+                (r.id, r.name, r.count) for r in
+                session.query(Person.id, Person.name,
+                              func.count(FilePeople.file_id).label("count"))
+                .join(FilePeople, FilePeople.person_id == Person.id)
+                .group_by(Person.id).all()
+            ]
+            tags = [
+                (r.id, r.label, r.count) for r in
+                session.query(Tag.id, Tag.label,
+                              func.count(FileTag.file_id).label("count"))
+                .join(FileTag, FileTag.tag_id == Tag.id)
+                .group_by(Tag.id).all()
+            ]
+            session.close()
+            self._sidebar.populate(locations, people, tags)
+        except Exception as e:
+            log.warning(f"Could not refresh sidebar counts: {e}")
+
     def _refresh_duplicate_ids(self):
         try:
             session = get_session()
@@ -778,6 +823,8 @@ class MainWindow(QMainWindow):
             self._status_label.setText(
                 f"{shown:,} of {total:,} item{'s' if total != 1 else ''}"
             )
+        # Refresh status overlay data for visible records
+        QTimer.singleShot(0, self._refresh_status_data)
 
     # ── Event handlers ────────────────────────────────────────────────────
 
@@ -948,6 +995,7 @@ class MainWindow(QMainWindow):
             log.warning(f"Could not log tag_add: {e}")
         if self._log_panel.isVisible():
             self._log_panel.refresh()
+        self._refresh_sidebar_counts()
 
     def _on_tag_removed(self, file_id: int, label: str):
         """Called when a tag chip is removed in the detail panel."""
@@ -966,6 +1014,7 @@ class MainWindow(QMainWindow):
             log.warning(f"Could not log tag_remove: {e}")
         if self._log_panel.isVisible():
             self._log_panel.refresh()
+        self._refresh_sidebar_counts()
 
     def _log_edit(
         self, *,
@@ -1081,6 +1130,83 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._session.rollback()
             log.error(f"Could not mark not-duplicate: {e}")
+
+    # ── Status overlay ────────────────────────────────────────────────────
+
+    def _refresh_status_data(self):
+        """Batch-compute completion status for all currently displayed records."""
+        if not self._status_overlay_on:
+            return
+        try:
+            from memoria.file_status import compute_status_batch, get_criteria
+            records = self._grid_model._records
+            if not records:
+                return
+            photo_ids = [r["id"] for r in records if r.get("file_type") == "photo"]
+            if not photo_ids:
+                return
+            criteria = get_criteria()
+            data = compute_status_batch(photo_ids, self._session, criteria)
+            self._grid_model.set_status_data(data)
+        except Exception as e:
+            log.warning(f"Status data refresh failed: {e}")
+
+    def _on_status_edit_requested(self, record: dict):
+        """Open the quick-edit dialog for this photo."""
+        from memoria.file_status import get_criteria
+        from memoria.ui.status_quick_edit_dialog import StatusQuickEditDialog
+        criteria = get_criteria()
+        dlg = StatusQuickEditDialog(self._session, record, criteria, parent=self)
+        dlg.changes_applied.connect(self._on_status_edit_applied)
+        dlg.exec()
+
+    def _on_status_edit_applied(self, file_id: int):
+        """Refresh detail panel + overlay + sidebar counts after a quick-edit."""
+        QTimer.singleShot(0, self._refresh_status_data)
+        self._refresh_sidebar_counts()
+        if (self._detail._current_record
+                and self._detail._current_record.get("id") == file_id):
+            self._detail._refresh_status()
+
+    def _go_next_incomplete(self):
+        """Select the next incomplete photo after the current selection."""
+        from memoria.file_status import get_criteria, compute_status_batch
+        records = self._grid_model._records
+        if not records:
+            return
+
+        # Determine start position
+        current_row = -1
+        sel = self._grid_view.currentIndex()
+        if sel.isValid():
+            current_row = sel.row()
+
+        # Use cached status data if available; otherwise compute
+        status_data = self._grid_model._status_data
+        if not status_data:
+            try:
+                criteria = get_criteria()
+                ids = [r["id"] for r in records if r.get("file_type") == "photo"]
+                status_data = compute_status_batch(ids, self._session, criteria)
+            except Exception:
+                return
+
+        # Scan forward (wraps around)
+        n = len(records)
+        for offset in range(1, n + 1):
+            row  = (current_row + offset) % n
+            rec  = records[row]
+            st   = status_data.get(rec["id"])
+            if st and not st.get("complete", True):
+                idx = self._grid_model.index(row)
+                self._grid_view.setCurrentIndex(idx)
+                self._grid_view.scrollTo(idx)
+                return
+
+        self._status_label.setText("🎉  All photos complete!")
+        QTimer.singleShot(3000, lambda: self._status_label.setText(
+            f"{len(records):,} item{'s' if len(records) != 1 else ''}"
+        ))
 
     # ── Dialog openers ────────────────────────────────────────────────────
 
@@ -1215,6 +1341,15 @@ class MainWindow(QMainWindow):
         s = load_settings()
         if s.get("columns") != self._columns:
             self._set_columns(s["columns"])
+        # Re-apply overlay toggle in case it changed
+        overlay = s.get("status_overlay", False)
+        if overlay != self._status_overlay_on:
+            self._status_overlay_on = overlay
+            self._grid_view.set_overlay_enabled(overlay)
+            if overlay:
+                self._refresh_status_data()
+            else:
+                self._grid_model.set_status_data({})
 
     def _open_generate_metadata(self):
         from memoria.ui.generate_metadata_dialog import GenerateMetadataDialog

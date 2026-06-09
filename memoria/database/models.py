@@ -64,6 +64,7 @@ class Metadata(Base):
     phash = Column(Text)                              # imagehash hex string
     title = Column(Text)                              # user-set title
     subject = Column(Text)                            # user-set subject
+    copyright = Column(Text)                          # EXIF Artist / Copyright
 
     file = relationship("File", back_populates="metadata_")
 

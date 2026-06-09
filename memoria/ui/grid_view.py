@@ -32,6 +32,7 @@ ROLE_FILENAME  = Qt.ItemDataRole.UserRole + 3
 ROLE_FILE_TYPE = Qt.ItemDataRole.UserRole + 4
 ROLE_DATE      = Qt.ItemDataRole.UserRole + 5
 ROLE_PIXMAP    = Qt.ItemDataRole.UserRole + 6
+ROLE_STATUS    = Qt.ItemDataRole.UserRole + 7   # status dict from file_status
 
 
 class PhotoGridModel(QAbstractListModel):
@@ -42,12 +43,22 @@ class PhotoGridModel(QAbstractListModel):
         self._cache.thumbnail_ready.connect(self._on_thumbnail_ready)
         self._id_to_row: dict[int, int] = {}
         self._card_width = CARD_WIDTH
+        self._status_data: dict[int, dict] = {}
 
     def load_records(self, records: list[dict]):
         self.beginResetModel()
         self._records = records
         self._id_to_row = {r["id"]: i for i, r in enumerate(records)}
+        self._status_data: dict[int, dict] = {}
         self.endResetModel()
+
+    def set_status_data(self, data: dict[int, dict]):
+        """Update per-photo status dicts and trigger a repaint."""
+        self._status_data = data
+        if self._records:
+            top    = self.index(0)
+            bottom = self.index(len(self._records) - 1)
+            self.dataChanged.emit(top, bottom, [ROLE_STATUS])
 
     def set_card_width(self, width: int):
         self._card_width = width
@@ -66,6 +77,7 @@ class PhotoGridModel(QAbstractListModel):
         if role == ROLE_FILENAME:  return r["filename"]
         if role == ROLE_FILE_TYPE: return r["file_type"]
         if role == ROLE_DATE:      return r.get("date_taken")
+        if role == ROLE_STATUS:    return self._status_data.get(r["id"])
         if role == ROLE_PIXMAP:
             return self._cache.get(r["id"], r["filepath"], r["file_type"])
         if role == Qt.ItemDataRole.SizeHintRole:
@@ -121,11 +133,15 @@ class PhotoDelegate(QStyledItemDelegate):
     RADIUS = 4
     PADDING = 2
 
+    # Height of the persistent status overlay strip (at bottom of thumbnail)
+    OVERLAY_H = 20
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._card_width   = CARD_WIDTH
-        self._hovered_row  = -1
-        self._duplicate_ids: set[int] = set()   # file IDs that have unreviewed duplicates
+        self._card_width    = CARD_WIDTH
+        self._hovered_row   = -1
+        self._duplicate_ids: set[int] = set()
+        self._overlay_enabled = False     # toggled from Appearance settings
 
     def set_card_width(self, width: int):
         self._card_width = width
@@ -135,6 +151,9 @@ class PhotoDelegate(QStyledItemDelegate):
 
     def set_duplicate_ids(self, ids: set[int]):
         self._duplicate_ids = ids
+
+    def set_overlay_enabled(self, enabled: bool):
+        self._overlay_enabled = enabled
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
         painter.save()
@@ -166,6 +185,12 @@ class PhotoDelegate(QStyledItemDelegate):
             painter.setPen(QPen(QColor("#ffffff")))
             painter.setFont(QFont("Segoe UI", 8))
             painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, "▶ VIDEO")
+
+        # ── Persistent status overlay (always-on when enabled) ────────────────
+        if self._overlay_enabled and index.data(ROLE_FILE_TYPE) == "photo":
+            status = index.data(ROLE_STATUS)
+            if status is not None:
+                self._paint_status_overlay(painter, thumb_rect, status)
 
         # Overlay icons — visible on hover, photos only
         if index.row() == self._hovered_row and index.data(ROLE_FILE_TYPE) == "photo":
@@ -211,6 +236,80 @@ class PhotoDelegate(QStyledItemDelegate):
 
         painter.restore()
 
+    def _paint_status_overlay(self, painter: QPainter,
+                               thumb_rect: QRect, status: dict):
+        """
+        Draw a semi-transparent strip at the bottom of the thumbnail.
+        Contains one coloured dot per active criterion:
+          green  = satisfied
+          red    = missing
+          amber  = intentionally incomplete (all dots become amber)
+        """
+        from memoria.file_status import FIELD_SHORT
+
+        fields     = status.get("fields", {})
+        intentional = status.get("intentional", False)
+        complete   = status.get("complete", False)
+
+        # Skip if complete and not intentional — photo is done, no clutter
+        if complete and not intentional:
+            # Draw a subtle green tick at top-right corner instead
+            painter.save()
+            tick_size = max(14, min(20, self._card_width // 8))
+            tick_rect = QRect(
+                thumb_rect.right() - tick_size - 4,
+                thumb_rect.top() + 4,
+                tick_size, tick_size,
+            )
+            painter.setBrush(QColor(0, 0, 0, 120))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(tick_rect, 4, 4)
+            painter.setPen(QPen(QColor("#a6e3a1")))
+            painter.setFont(QFont("Segoe UI", max(7, tick_size - 6)))
+            painter.drawText(tick_rect, Qt.AlignmentFlag.AlignCenter, "✓")
+            painter.restore()
+            return
+
+        if not fields:
+            return
+
+        # Background strip
+        strip_h = self.OVERLAY_H
+        strip_rect = QRect(
+            thumb_rect.left(),
+            thumb_rect.bottom() - strip_h,
+            thumb_rect.width(),
+            strip_h,
+        )
+        painter.save()
+        painter.setBrush(QColor(0, 0, 0, 175))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRect(strip_rect)
+
+        # Dots
+        dot_d   = max(6, min(10, self._card_width // 18))   # dot diameter
+        gap     = max(3, dot_d // 2)
+        n       = len(fields)
+        total_w = n * dot_d + (n - 1) * gap
+        x_start = strip_rect.left() + max(4, (strip_rect.width() - total_w) // 2)
+        y_center = strip_rect.top() + strip_h // 2
+
+        for key, ok in fields.items():
+            if intentional:
+                colour = QColor("#e6a817")   # amber for intentional
+            elif ok:
+                colour = QColor("#a6e3a1")   # green
+            else:
+                colour = QColor("#f38ba8")   # red
+
+            dot_rect = QRect(x_start, y_center - dot_d // 2, dot_d, dot_d)
+            painter.setBrush(colour)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(dot_rect)
+            x_start += dot_d + gap
+
+        painter.restore()
+
     def sizeHint(self, option, index) -> QSize:
         return QSize(self._card_width, _card_height(self._card_width))
 
@@ -221,6 +320,7 @@ class PhotoGridView(QListView):
     face_review_requested   = pyqtSignal(dict)
     not_duplicate_requested = pyqtSignal(dict)
     meta_field_changed      = pyqtSignal(int, str, str)   # file_id, field, value
+    status_edit_requested   = pyqtSignal(dict)            # record dict
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -254,6 +354,10 @@ class PhotoGridView(QListView):
 
     def set_duplicate_ids(self, ids: set[int]):
         self._delegate.set_duplicate_ids(ids)
+        self.viewport().update()
+
+    def set_overlay_enabled(self, enabled: bool):
+        self._delegate.set_overlay_enabled(enabled)
         self.viewport().update()
 
     # ── Hover tracking ────────────────────────────────────────────────────────
@@ -300,8 +404,23 @@ class PhotoGridView(QListView):
             idx = self.indexAt(event.pos())
             if idx.isValid() and idx.data(ROLE_FILE_TYPE) == "photo":
                 card_rect = self.visualRect(idx)
+                # thumb_rect is the photo area (card minus label strip)
+                thumb_rect = card_rect.adjusted(0, 0, 0, -LABEL_HEIGHT)
                 pos = event.pos()
                 record = self._record_from_index(idx)
+
+                # Status overlay strip — bottom OVERLAY_H pixels of thumbnail
+                if self._delegate._overlay_enabled:
+                    overlay_rect = QRect(
+                        thumb_rect.left(),
+                        thumb_rect.bottom() - PhotoDelegate.OVERLAY_H,
+                        thumb_rect.width(),
+                        PhotoDelegate.OVERLAY_H,
+                    )
+                    if overlay_rect.contains(pos):
+                        self.status_edit_requested.emit(record)
+                        return
+
                 if _rot_icon_rect(card_rect).contains(pos):
                     self.rotate_requested.emit(record)
                     return
